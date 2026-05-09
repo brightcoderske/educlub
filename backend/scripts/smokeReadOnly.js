@@ -1,6 +1,7 @@
 const db = require("../config/database");
 const schoolAdmin = require("../services/schoolAdmin.service");
 const systemAdmin = require("../services/systemAdmin.service");
+const student = require("../services/student.service");
 
 async function main() {
   const admin = await db.one(
@@ -36,6 +37,9 @@ async function main() {
     detail.quiz_results.length,
     detail.typing_results.length
   );
+
+  const studentDashboard = await student.dashboard({ sub: learner.id, role: "student", school_id: admin.school_id });
+  console.log("student dashboard ok", studentDashboard.learner.full_name, studentDashboard.courses.length);
 }
 
 main()

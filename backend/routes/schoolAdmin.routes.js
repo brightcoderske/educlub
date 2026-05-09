@@ -18,6 +18,7 @@ router.post("/learners", controller.addLearner);
 router.post("/learners/bulk-upload", memoryUpload.single("file"), controller.bulkImportLearners);
 router.get("/learners/:id/detail", controller.learnerDetail);
 router.patch("/learners/:id", controller.updateLearner);
+router.post("/learners/:id/promotions", controller.promoteLearner);
 router.get("/courses", controller.availableCourses);
 router.post("/course-allocations", controller.bulkAllocateCourse);
 router.get("/submissions", controller.listSubmissions);

@@ -87,14 +87,26 @@ async function checkSchoolAdmin() {
   }
 }
 
+async function checkStudent() {
+  const user = await db.one("select id, role, school_id, full_name, name, email, username from users where role = 'student' and school_id is not null and deleted_at is null limit 1");
+  if (!user) {
+    console.log("student skipped: no user");
+    return;
+  }
+  const token = tokenFor(user);
+  await getJson("/student/dashboard", token);
+  console.log("student ok /student/dashboard");
+}
+
 async function main() {
   await checkSystemAdmin();
   await checkSchoolAdmin();
+  await checkStudent();
 }
 
 main()
   .catch((error) => {
-    console.error(error.message);
+    console.error(error.stack || error.message || error);
     process.exitCode = 1;
   })
   .finally(async () => {

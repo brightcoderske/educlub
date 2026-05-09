@@ -1,0 +1,230 @@
+.student-shell {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  background:
+    radial-gradient(circle at 90% 10%, rgba(245, 184, 51, 0.26), transparent 24%),
+    radial-gradient(circle at 15% 20%, rgba(31, 157, 114, 0.22), transparent 25%),
+    linear-gradient(180deg, #f6fbff 0%, #f7fff9 100%);
+  color: #172033;
+}
+
+.student-sidebar {
+  padding: 24px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  background: linear-gradient(180deg, #17324d, #2367d1);
+  color: #fff;
+  box-shadow: 16px 0 48px rgba(23, 50, 77, 0.18);
+}
+
+.student-brand {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 14px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.student-brand strong,
+.student-brand span {
+  display: block;
+}
+
+.student-brand span {
+  color: #dbeafe;
+  font-size: 0.88rem;
+}
+
+.student-sidebar nav {
+  display: grid;
+  gap: 7px;
+}
+
+.student-sidebar button,
+.student-logout {
+  min-height: 42px;
+  border: 0;
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.student-sidebar button:hover,
+.student-sidebar button.active {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.student-logout {
+  margin-top: auto;
+}
+
+.student-main {
+  padding: 30px;
+  display: grid;
+  align-content: start;
+  gap: 20px;
+}
+
+.student-hero {
+  min-height: 230px;
+  padding: 32px;
+  border-radius: 28px;
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  align-items: center;
+  background:
+    linear-gradient(115deg, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.6)),
+    linear-gradient(135deg, #cce9ff 0%, #fff0b3 52%, #c8f6dd 100%);
+  border: 1px solid rgba(255, 255, 255, 0.86);
+  box-shadow: 0 24px 62px rgba(35, 66, 96, 0.13);
+}
+
+.student-hero h1 {
+  margin: 0;
+  max-width: 760px;
+  font-size: clamp(2rem, 4vw, 4rem);
+  line-height: 1.05;
+}
+
+.student-hero p:not(.eyebrow) {
+  max-width: 640px;
+  color: #3b536b;
+  line-height: 1.65;
+}
+
+.student-level-card {
+  width: min(210px, 100%);
+  padding: 18px;
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.76);
+  border: 1px solid rgba(255, 255, 255, 0.86);
+  display: grid;
+  gap: 6px;
+  box-shadow: 0 14px 36px rgba(18, 50, 74, 0.12);
+}
+
+.student-level-card span,
+.student-level-card small {
+  color: #65758b;
+  font-weight: 800;
+}
+
+.student-level-card strong {
+  font-size: 2.2rem;
+}
+
+.student-section {
+  display: grid;
+  gap: 18px;
+}
+
+.student-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.student-stat {
+  min-height: 128px;
+  padding: 18px;
+  border-radius: 22px;
+  background: #fff;
+  border: 1px solid #dfe8f2;
+  display: grid;
+  align-content: space-between;
+  box-shadow: 0 14px 34px rgba(35, 66, 96, 0.08);
+}
+
+.student-stat span {
+  color: #5c6d80;
+  font-weight: 800;
+}
+
+.student-stat strong {
+  font-size: 2.1rem;
+}
+
+.student-stat.blue { border-top: 8px solid #2367d1; }
+.student-stat.green { border-top: 8px solid #1f9d72; }
+.student-stat.gold { border-top: 8px solid #f5b833; }
+.student-stat.coral { border-top: 8px solid #f1725e; }
+
+.student-panel {
+  padding: 22px;
+  border-radius: 24px;
+  background: #fff;
+  border: 1px solid #dfe8f2;
+  box-shadow: 0 14px 34px rgba(35, 66, 96, 0.08);
+}
+
+.student-panel h2 {
+  margin: 0 0 16px;
+}
+
+.course-bars {
+  display: grid;
+  gap: 12px;
+}
+
+.course-bar-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 240px) 1fr 56px;
+  gap: 12px;
+  align-items: center;
+}
+
+.bar-track {
+  height: 14px;
+  border-radius: 999px;
+  background: #e8f0f7;
+  overflow: hidden;
+}
+
+.bar-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #1f9d72, #2367d1);
+}
+
+.student-empty,
+.student-loading,
+.student-alert {
+  padding: 16px;
+  border-radius: 18px;
+  background: #f8fbff;
+  border: 1px solid #dfe8f2;
+  color: #5c6d80;
+  font-weight: 800;
+}
+
+.student-alert {
+  background: #fff3f1;
+  border-color: #ffd0ca;
+  color: #9f1d14;
+}
+
+@media (max-width: 980px) {
+  .student-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .student-stat-grid,
+  .course-bar-row {
+    grid-template-columns: 1fr;
+  }
+
+  .student-hero {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

@@ -95,6 +95,7 @@ const bulkImportLearners = wrap(async (req, res) => {
 });
 const learnerDetail = wrap(async (req, res) => res.json(await service.learnerDetail(req.user, req.params.id, req.query)));
 const updateLearner = wrap(async (req, res) => res.json(await service.updateLearner(req.user, req.params.id, req.body)));
+const promoteLearner = wrap(async (req, res) => res.json(await service.promoteLearner(req.user, req.params.id, req.body)));
 const listSubmissions = wrap(async (req, res) => res.json(await service.listSubmissions(req.user, req.query)));
 const reviewSubmission = wrap(async (req, res) => res.json(await service.reviewSubmission(req.user, req.params.id, req.body)));
 const typingResults = wrap(async (req, res) => res.json(await service.typingResults(req.user, req.query)));
@@ -120,6 +121,7 @@ module.exports = {
   addLearner,
   bulkImportLearners,
   updateLearner,
+  promoteLearner,
   listSubmissions,
   reviewSubmission,
   typingResults,

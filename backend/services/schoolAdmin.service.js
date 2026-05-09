@@ -335,6 +335,54 @@ async function updateLearner(user, learnerId, payload) {
   });
 }
 
+async function promoteLearner(user, learnerId, payload = {}) {
+  const schoolId = scopedSchoolId(user);
+  const mode = payload.mode || "next_grade";
+
+  if (!["next_term", "next_grade"].includes(mode)) {
+    const error = new Error("Promotion mode must be next_term or next_grade");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  return transaction(async (client) => {
+    const existing = await client.query(
+      `select id, coalesce(full_name, name) as full_name, grade, stream, parent_name, parent_email, parent_phone
+       from users
+       where id = $1 and school_id = $2 and role = 'student' and deleted_at is null`,
+      [learnerId, schoolId]
+    );
+
+    if (!existing.rows[0]) {
+      const error = new Error("Learner not found");
+      error.statusCode = 404;
+      throw error;
+    }
+
+    const learner = existing.rows[0];
+    const newGrade = mode === "next_grade" ? Number(learner.grade || 0) + 1 : Number(learner.grade || 0);
+    const newStream = payload.stream !== undefined ? payload.stream || null : learner.stream || null;
+    const note = mode === "next_grade" ? "Promoted to next grade" : "Promoted to next term";
+
+    const updated = await client.query(
+      `update users
+       set grade = $3, stream = $4, updated_at = now()
+       where id = $1 and school_id = $2 and role = 'student'
+       returning id, coalesce(full_name, name) as full_name, username, grade, stream, parent_name, parent_email, parent_phone`,
+      [learnerId, schoolId, newGrade, newStream]
+    );
+
+    await client.query(
+      `insert into grade_history (learner_id, school_id, old_grade, new_grade, old_stream, new_stream, approved_by, note)
+       values ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [learnerId, schoolId, learner.grade, newGrade, learner.stream, newStream, user.sub, payload.note || note]
+    );
+
+    await upsertLearnerProfile(client, schoolId, updated.rows[0]);
+    return updated.rows[0];
+  });
+}
+
 async function listSubmissions(user, params = {}) {
   const schoolId = scopedSchoolId(user);
   const { limit, offset } = pagination(params);
@@ -700,6 +748,7 @@ module.exports = {
   addLearner,
   bulkImportLearners,
   updateLearner,
+  promoteLearner,
   listSubmissions,
   reviewSubmission,
   typingResults,

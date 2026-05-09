@@ -147,7 +147,7 @@ function BulkLearnerUpload({ onUploaded }) {
     <form className="school-form upload-form" onSubmit={submit}>
       <div>
         <strong>Bulk learner upload</strong>
-        <p>Excel columns: child name, grade, stream. Usernames are generated from child names. Temporary password is Password.</p>
+        <p>Upload a real `.xlsx` or `.csv` file with the first row exactly: child name, grade, stream. Each next row should contain one learner, for example: child name = Mary Wanjiku, grade = 4, stream = Blue. Parent details are not required. Usernames are generated from the child name and every imported learner starts with password Password, with change required on first login.</p>
       </div>
       <input type="file" accept=".xlsx,.csv" onChange={(e) => setFile(e.target.files?.[0] || null)} required />
       <button type="submit"><Upload size={16} />Upload learners</button>
@@ -284,6 +284,7 @@ function LearnerDetailPanel({ detail, streams, terms, onClose, onSaved, onTermCh
     parent_phone: detail.learner.parent_phone || ""
   });
   const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
 
   async function save(event) {
     event.preventDefault();
@@ -296,8 +297,21 @@ function LearnerDetailPanel({ detail, streams, terms, onClose, onSaved, onTermCh
     }
   }
 
+  async function promote(mode) {
+    setError("");
+    setMessage("");
+    try {
+      const result = await api.post(`/school-admin/learners/${detail.learner.id}/promotions`, { mode, stream: form.stream || null });
+      setMessage(mode === "next_grade" ? `${result.full_name} moved to Grade ${result.grade}.` : `${result.full_name} marked ready for the next term.`);
+      onSaved(detail.learner.id);
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
   return (
-    <section className="learner-detail-panel">
+    <div className="learner-detail-backdrop">
+    <section className="learner-detail-panel" role="dialog" aria-modal="true" aria-label={`${detail.learner.full_name} details`}>
       <div className="detail-header">
         <div>
           <p className="eyebrow">Learner profile</p>
@@ -323,8 +337,19 @@ function LearnerDetailPanel({ detail, streams, terms, onClose, onSaved, onTermCh
         <label>Parent email<input type="email" value={form.parent_email} onChange={(e) => setForm({ ...form, parent_email: e.target.value })} /></label>
         <label>Parent phone<input value={form.parent_phone} onChange={(e) => setForm({ ...form, parent_phone: e.target.value })} /></label>
         {error ? <p className="form-error">{error}</p> : null}
+        {message ? <p className="success-text">{message}</p> : null}
         <button type="submit"><CheckCircle2 size={16} />Save learner</button>
       </form>
+      <section className="promotion-panel">
+        <div>
+          <h3>Promotion Controls</h3>
+          <p>Use next term when the learner continues in the same grade. Use next grade after the academic year is complete.</p>
+        </div>
+        <div className="promotion-actions">
+          <button type="button" className="secondary-button" onClick={() => promote("next_term")}>Promote to next term</button>
+          <button type="button" onClick={() => promote("next_grade")}><CheckCircle2 size={16} />Promote to next grade</button>
+        </div>
+      </section>
       <div className="learner-history-grid">
         <section className="panel compact-panel">
           <h3>Report Summary</h3>
@@ -342,6 +367,7 @@ function LearnerDetailPanel({ detail, streams, terms, onClose, onSaved, onTermCh
         <section className="panel compact-panel"><h3>Typing</h3><DataTable rows={detail.typing_results} emptyTitle="No typing results for this term" columns={[{ key: "wpm", label: "WPM" }, { key: "accuracy", label: "Accuracy", render: (row) => `${Number(row.accuracy || 0).toFixed(1)}%` }, { key: "created_at", label: "Date", render: (row) => formatDate(row.created_at) }]} /></section>
       </div>
     </section>
+    </div>
   );
 }
 
