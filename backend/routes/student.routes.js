@@ -7,5 +7,7 @@ const router = express.Router();
 
 router.use(authenticate, requireRoles("student"));
 router.get("/dashboard", controller.dashboard);
+router.get("/quizzes/:id", controller.quizForTaking);
+router.post("/quizzes/:id/attempts", controller.submitQuizAttempt);
 
 module.exports = router;

@@ -23,6 +23,34 @@ function like(value) {
   return `%${value}%`;
 }
 
+function normalizeGrades(grades) {
+  const values = Array.isArray(grades) ? grades : String(grades || "").split(",");
+  const normalized = [...new Set(values.map((grade) => Number(grade)).filter((grade) => Number.isInteger(grade) && grade >= 1 && grade <= 9))];
+  if (!normalized.length) {
+    const error = new Error("Select at least one grade from 1 to 9");
+    error.statusCode = 400;
+    throw error;
+  }
+  return normalized.sort((a, b) => a - b);
+}
+
+function normalizeCorrectOption(value) {
+  const option = String(value || "").trim().toUpperCase();
+  if (!["A", "B", "C", "D"].includes(option)) {
+    const error = new Error("Correct option must be A, B, C, or D");
+    error.statusCode = 400;
+    throw error;
+  }
+  return option;
+}
+
+function gradeBand(score) {
+  const value = Number(score);
+  if (value <= 50) return "Approaching expectation";
+  if (value <= 80) return "Meets expectation";
+  return "Exceeding expectation";
+}
+
 async function profile(user) {
   const schoolId = scopedSchoolId(user);
   return one(
@@ -447,6 +475,182 @@ async function quizResults(user, params = {}) {
   );
 }
 
+async function globalQuizzes(user) {
+  scopedSchoolId(user);
+  const result = await query(
+    `select q.id, q.title, q.description, q.grade_levels, q.max_attempts, q.total_points,
+            q.time_limit_seconds, q.randomise_order, q.created_at,
+            count(qi.question_id)::int as question_count
+     from quizzes q
+     left join quiz_items qi on qi.quiz_id = q.id
+     where q.is_global = true and q.is_published = true and q.deleted_at is null
+     group by q.id
+     order by q.created_at desc`
+  );
+  return result.rows;
+}
+
+async function schoolQuizzes(user) {
+  const schoolId = scopedSchoolId(user);
+  const result = await query(
+    `select q.id, q.title, q.description, q.grade_levels, q.max_attempts, q.total_points,
+            q.time_limit_seconds, q.randomise_order, q.is_published, q.created_at,
+            count(qi.question_id)::int as question_count
+     from quizzes q
+     left join quiz_items qi on qi.quiz_id = q.id
+     where q.school_id = $1 and q.is_global = false and q.deleted_at is null
+     group by q.id
+     order by q.created_at desc`,
+    [schoolId]
+  );
+  return result.rows;
+}
+
+async function createSchoolQuiz(user, payload) {
+  const schoolId = scopedSchoolId(user);
+  const grades = normalizeGrades(payload.grade_levels);
+  if (!payload.title) {
+    const error = new Error("Quiz title is required");
+    error.statusCode = 400;
+    throw error;
+  }
+  return one(
+    `insert into quizzes (
+       school_id, title, description, grade_levels, max_attempts, total_points,
+       time_limit_seconds, randomise_order, is_global, is_published, created_by
+     )
+     values ($1, $2, $3, $4, $5, 100, $6, $7, false, true, $8)
+     returning id, title, description, grade_levels, max_attempts, total_points, is_published, created_at`,
+    [
+      schoolId,
+      payload.title,
+      payload.description || null,
+      grades,
+      Number(payload.max_attempts || 1),
+      payload.time_limit_seconds ? Number(payload.time_limit_seconds) : null,
+      Boolean(payload.randomise_order),
+      user.sub
+    ]
+  );
+}
+
+async function addQuestionToSchoolQuiz(user, quizId, payload) {
+  const schoolId = scopedSchoolId(user);
+  const quiz = await one("select id from quizzes where id = $1 and school_id = $2 and is_global = false and deleted_at is null", [quizId, schoolId]);
+  if (!quiz) {
+    const error = new Error("School quiz not found");
+    error.statusCode = 404;
+    throw error;
+  }
+  return transaction(async (client) => {
+    const question = await client.query(
+      `insert into quiz_questions (school_id, question, option_a, option_b, option_c, option_d, correct_option, is_global)
+       values ($1, $2, $3, $4, $5, $6, $7, false)
+       returning id, question, option_a, option_b, option_c, option_d, correct_option`,
+      [
+        schoolId,
+        payload.question,
+        payload.option_a,
+        payload.option_b,
+        payload.option_c,
+        payload.option_d,
+        normalizeCorrectOption(payload.correct_option)
+      ]
+    );
+    const order = await client.query("select coalesce(max(sort_order), 0) + 1 as next_order from quiz_items where quiz_id = $1", [quizId]);
+    await client.query("insert into quiz_items (quiz_id, question_id, sort_order) values ($1, $2, $3)", [quizId, question.rows[0].id, order.rows[0].next_order]);
+    return question.rows[0];
+  });
+}
+
+async function assignQuiz(user, quizId, payload) {
+  const schoolId = scopedSchoolId(user);
+  const grades = normalizeGrades(payload.grades || payload.grade_levels);
+  const term = payload.term_id ? { id: payload.term_id } : await activeTerm(user);
+  const termId = term?.id || null;
+
+  if (!termId) {
+    const error = new Error("An active term is required before assigning quizzes");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const quiz = await one(
+    `select id, title, grade_levels, max_attempts, is_global, school_id
+     from quizzes
+     where id = $1 and deleted_at is null and is_published = true and (is_global = true or school_id = $2)`,
+    [quizId, schoolId]
+  );
+  if (!quiz) {
+    const error = new Error("Quiz not found or not available to this school");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const allowed = (quiz.grade_levels || []).map((grade) => Number(grade));
+  const blocked = grades.filter((grade) => !allowed.includes(grade));
+  if (blocked.length) {
+    const error = new Error(`This quiz is only available to Grade ${allowed.join("-") || "none"}`);
+    error.statusCode = 400;
+    throw error;
+  }
+
+  return transaction(async (client) => {
+    const assigned = [];
+    for (const grade of grades) {
+      const result = await client.query(
+        `insert into quiz_assignments (quiz_id, school_id, term_id, grade, assigned_by, max_attempts, is_active)
+         values ($1, $2, $3, $4, $5, $6, true)
+         on conflict (quiz_id, school_id, term_id, grade) do update set
+           max_attempts = excluded.max_attempts,
+           is_active = true,
+           assigned_by = excluded.assigned_by,
+           assigned_at = now()
+         returning *`,
+        [quizId, schoolId, termId, grade, user.sub, Number(payload.max_attempts || quiz.max_attempts || 1)]
+      );
+      assigned.push(result.rows[0]);
+    }
+    return { assigned, count: assigned.length };
+  });
+}
+
+async function quizAssignments(user, params = {}) {
+  const schoolId = scopedSchoolId(user);
+  const termId = params.term_id || null;
+  const result = await query(
+    `select qa.id, qa.quiz_id, qa.term_id, qa.grade, qa.max_attempts, qa.is_active, qa.assigned_at,
+            q.title, q.grade_levels, q.is_global, q.total_points,
+            count(distinct u.id)::int as learner_count
+     from quiz_assignments qa
+     join quizzes q on q.id = qa.quiz_id
+     left join users u on u.school_id = qa.school_id and u.role = 'student' and u.grade = qa.grade and u.deleted_at is null
+     where qa.school_id = $1 and ($2::uuid is null or qa.term_id = $2)
+     group by qa.id, q.id
+     order by qa.assigned_at desc`,
+    [schoolId, termId]
+  );
+  return result.rows;
+}
+
+async function quizPerformance(user, params = {}) {
+  const schoolId = scopedSchoolId(user);
+  const termId = params.term_id || null;
+  const result = await query(
+    `select qa.quiz_id, q.title as quiz_title, count(qa.id)::int as attempts,
+            avg(qa.score)::numeric as average_score,
+            min(qa.score)::numeric as lowest_score,
+            max(qa.score)::numeric as highest_score
+     from quiz_attempts qa
+     left join quizzes q on q.id = qa.quiz_id
+     where qa.school_id = $1 and ($2::uuid is null or qa.term_id = $2)
+     group by qa.quiz_id, q.title
+     order by q.title nulls last`,
+    [schoolId, termId]
+  );
+  return result.rows.map((row) => ({ ...row, expectation: row.average_score === null ? "-" : gradeBand(row.average_score) }));
+}
+
 async function leaderboards(user, params = {}) {
   const schoolId = scopedSchoolId(user);
   const { limit, offset } = pagination(params);
@@ -588,7 +792,7 @@ async function learnerDetail(user, learnerId, params = {}) {
   const profileId = learnerProfile?.id || null;
   const termId = term?.id || null;
 
-  const [enrolments, submissions, reports, typing, quizzes, progress] = await Promise.all([
+  const [enrolments, submissions, reports, typing, quizzes, progress, quizTrend] = await Promise.all([
     query(
       `select e.id, e.status, e.created_at, coalesce(c.name, c.title) as course_name, t.name as term_name, ay.year
        from enrolments e
@@ -643,6 +847,16 @@ async function learnerDetail(user, learnerId, params = {}) {
        where lp.learner_id = $1
        order by lp.updated_at desc`,
       [learnerId]
+    ),
+    query(
+      `select date_trunc('week', qa.created_at)::date as week_start,
+              avg(qa.score)::numeric as average_score,
+              count(*)::int as attempts
+       from quiz_attempts qa
+       where qa.school_id = $1 and qa.learner_id = $2 and ($3::uuid is null or qa.term_id = $3)
+       group by date_trunc('week', qa.created_at)::date
+       order by week_start`,
+      [schoolId, learnerId, termId]
     )
   ]);
 
@@ -660,6 +874,7 @@ async function learnerDetail(user, learnerId, params = {}) {
       average_score: averageNumber(quizzes.rows, "score")
     },
     lesson_progress: progress.rows,
+    weekly_quiz_trend: quizTrend.rows,
     submissions: submissions.rows,
     teacher_remarks: reports.rows[0]?.teacher_remarks || null,
     published_report: reports.rows[0] || null
@@ -674,6 +889,7 @@ async function learnerDetail(user, learnerId, params = {}) {
     typing_results: typing.rows,
     quiz_results: quizzes.rows,
     lesson_progress: progress.rows,
+    weekly_quiz_trend: quizTrend.rows,
     report
   };
 }
@@ -753,6 +969,13 @@ module.exports = {
   reviewSubmission,
   typingResults,
   quizResults,
+  globalQuizzes,
+  schoolQuizzes,
+  createSchoolQuiz,
+  addQuestionToSchoolQuiz,
+  assignQuiz,
+  quizAssignments,
+  quizPerformance,
   leaderboards,
   preferences,
   ensurePreferences,

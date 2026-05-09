@@ -406,6 +406,48 @@ button:disabled {
   gap: 12px;
 }
 
+.grade-checks {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  align-content: start;
+}
+
+.check-row {
+  display: grid;
+  grid-template-columns: 20px 1fr;
+  align-items: center;
+  gap: 8px;
+}
+
+.check-row input {
+  width: 16px;
+  height: 16px;
+}
+
+.quiz-manager-grid,
+.quiz-school-grid {
+  display: grid;
+  grid-template-columns: minmax(320px, 0.9fr) minmax(0, 1.4fr);
+  gap: 18px;
+}
+
+.quiz-school-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.helper-text {
+  margin: 0;
+  color: #65758b;
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
+.compact-action {
+  min-height: 32px;
+  padding: 6px 8px;
+}
+
 .table-wrap {
   overflow-x: auto;
 }
@@ -446,6 +488,9 @@ tr:hover td {
   .metric-grid,
   .inline-form,
   .option-grid,
+  .grade-checks,
+  .quiz-manager-grid,
+  .quiz-school-grid,
   .school-list-grid,
   .detail-grid,
   .detail-form {

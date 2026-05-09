@@ -10,8 +10,11 @@ import {
   ClipboardList,
   GraduationCap,
   LogOut,
+  Pencil,
   Plus,
   Shield,
+  Trash2,
+  Upload,
   Users
 } from "lucide-react";
 import { api } from "../../lib/api";
@@ -194,6 +197,163 @@ function CreateQuestionForm({ onCreated }) {
   );
 }
 
+function GradeChecks({ value, onChange }) {
+  const grades = value || [];
+  function toggle(grade) {
+    onChange(grades.includes(grade) ? grades.filter((item) => item !== grade) : [...grades, grade].sort((a, b) => a - b));
+  }
+  return (
+    <div className="grade-checks">
+      {Array.from({ length: 9 }, (_, index) => index + 1).map((grade) => (
+        <label key={grade} className="check-row">
+          <input type="checkbox" checked={grades.includes(grade)} onChange={() => toggle(grade)} />
+          Grade {grade}
+        </label>
+      ))}
+    </div>
+  );
+}
+
+function GlobalQuizForm({ onCreated }) {
+  const [form, setForm] = useState({ title: "", description: "", grade_levels: [1], max_attempts: 1, time_limit_seconds: "" });
+  const [error, setError] = useState("");
+
+  async function submit(event) {
+    event.preventDefault();
+    setError("");
+    try {
+      await api.post("/quizzes/global", {
+        ...form,
+        max_attempts: Number(form.max_attempts || 1),
+        time_limit_seconds: form.time_limit_seconds ? Number(form.time_limit_seconds) : null
+      });
+      setForm({ title: "", description: "", grade_levels: [1], max_attempts: 1, time_limit_seconds: "" });
+      onCreated();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  return (
+    <form className="inline-form quiz-admin-form" onSubmit={submit}>
+      <label>Quiz title<input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} required /></label>
+      <label>Description<textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></label>
+      <label>Max attempts<input type="number" min="1" max="20" value={form.max_attempts} onChange={(e) => setForm({ ...form, max_attempts: e.target.value })} required /></label>
+      <label>Time limit seconds<input type="number" min="30" value={form.time_limit_seconds} onChange={(e) => setForm({ ...form, time_limit_seconds: e.target.value })} /></label>
+      <GradeChecks value={form.grade_levels} onChange={(grades) => setForm({ ...form, grade_levels: grades })} />
+      {error ? <p className="form-error">{error}</p> : null}
+      <button type="submit"><Plus size={16} />Create global quiz</button>
+    </form>
+  );
+}
+
+function GlobalQuizManager({ quizzes, onChanged }) {
+  const [selectedQuiz, setSelectedQuiz] = useState(null);
+  const [question, setQuestion] = useState({ question: "", option_a: "", option_b: "", option_c: "", option_d: "", correct_option: "A" });
+  const [file, setFile] = useState(null);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+
+  async function openQuiz(id) {
+    setError("");
+    setMessage("");
+    setSelectedQuiz(await api.get(`/quizzes/global/${id}`));
+  }
+
+  async function saveQuiz(event) {
+    event.preventDefault();
+    setError("");
+    try {
+      await api.patch(`/quizzes/global/${selectedQuiz.id}`, selectedQuiz);
+      setMessage("Quiz updated.");
+      onChanged();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function deleteQuiz(id) {
+    if (!window.confirm("Delete this global quiz? Existing attempts remain in reports, but the quiz will no longer be assignable.")) return;
+    await api.delete(`/quizzes/global/${id}`);
+    if (selectedQuiz?.id === id) setSelectedQuiz(null);
+    onChanged();
+  }
+
+  async function addQuestion(event) {
+    event.preventDefault();
+    setError("");
+    try {
+      await api.post(`/quizzes/global/${selectedQuiz.id}/questions`, question);
+      setQuestion({ question: "", option_a: "", option_b: "", option_c: "", option_d: "", correct_option: "A" });
+      await openQuiz(selectedQuiz.id);
+      onChanged();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function uploadQuestions(event) {
+    event.preventDefault();
+    setError("");
+    const formData = new FormData();
+    formData.append("file", file);
+    try {
+      const result = await api.upload(`/quizzes/global/${selectedQuiz.id}/questions/upload`, formData);
+      setMessage(`${result.created.length} questions imported. ${result.errors.length} row errors.`);
+      setFile(null);
+      await openQuiz(selectedQuiz.id);
+      onChanged();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  return (
+    <div className="quiz-manager-grid">
+      <section className="panel compact-panel">
+        <h3>Global Quizzes</h3>
+        <DataTable rows={quizzes} emptyTitle="No global quizzes yet" columns={[
+          { key: "title", label: "Quiz", render: (row) => <button type="button" className="link-button" onClick={() => openQuiz(row.id)}>{row.title}</button> },
+          { key: "grade_levels", label: "Grades", render: (row) => row.grade_levels?.join(", ") || "-" },
+          { key: "question_count", label: "Questions" },
+          { key: "actions", label: "Actions", render: (row) => <button type="button" className="danger-button compact-action" onClick={() => deleteQuiz(row.id)}><Trash2 size={14} /></button> }
+        ]} />
+      </section>
+      {selectedQuiz ? (
+        <section className="panel compact-panel">
+          <h3>Manage Quiz</h3>
+          {error ? <p className="form-error">{error}</p> : null}
+          {message ? <p className="success-text">{message}</p> : null}
+          <form className="stack-form" onSubmit={saveQuiz}>
+            <label>Title<input value={selectedQuiz.title || ""} onChange={(e) => setSelectedQuiz({ ...selectedQuiz, title: e.target.value })} required /></label>
+            <label>Description<textarea value={selectedQuiz.description || ""} onChange={(e) => setSelectedQuiz({ ...selectedQuiz, description: e.target.value })} /></label>
+            <GradeChecks value={selectedQuiz.grade_levels || []} onChange={(grades) => setSelectedQuiz({ ...selectedQuiz, grade_levels: grades })} />
+            <label>Max attempts<input type="number" min="1" max="20" value={selectedQuiz.max_attempts || 1} onChange={(e) => setSelectedQuiz({ ...selectedQuiz, max_attempts: Number(e.target.value) })} /></label>
+            <button type="submit"><Pencil size={16} />Save quiz</button>
+          </form>
+          <form className="question-form" onSubmit={addQuestion}>
+            <label>Question<textarea value={question.question} onChange={(e) => setQuestion({ ...question, question: e.target.value })} required /></label>
+            <div className="option-grid">
+              {["option_a", "option_b", "option_c", "option_d"].map((key) => <label key={key}>{key.replace("_", " ").toUpperCase()}<input value={question[key]} onChange={(e) => setQuestion({ ...question, [key]: e.target.value })} required /></label>)}
+            </div>
+            <label>Correct option<select value={question.correct_option} onChange={(e) => setQuestion({ ...question, correct_option: e.target.value })}><option>A</option><option>B</option><option>C</option><option>D</option></select></label>
+            <button type="submit"><Plus size={16} />Add question</button>
+          </form>
+          <form className="inline-form" onSubmit={uploadQuestions}>
+            <label>Bulk questions CSV/XLSX<input type="file" accept=".csv,.xlsx" onChange={(e) => setFile(e.target.files?.[0] || null)} required /></label>
+            <button type="submit"><Upload size={16} />Upload questions</button>
+            <p className="helper-text">Columns: question, option_a, option_b, option_c, option_d, correct_option.</p>
+          </form>
+          <DataTable rows={selectedQuiz.questions} emptyTitle="No questions yet" columns={[
+            { key: "question", label: "Question" },
+            { key: "correct_option", label: "Answer" }
+          ]} />
+        </section>
+      ) : null}
+    </div>
+  );
+}
+
 function CreateSchoolAdminForm({ schools, onCreated }) {
   const [form, setForm] = useState({ full_name: "", email: "", password: "", school_id: "" });
   const [error, setError] = useState("");
@@ -373,6 +533,7 @@ export default function SystemAdminDashboard() {
     terms: [],
     users: [],
     courses: [],
+    globalQuizzes: [],
     questions: [],
     leaderboards: [],
     audit: [],
@@ -403,6 +564,7 @@ export default function SystemAdminDashboard() {
         terms: api.get("/terms"),
         users: api.get("/users"),
         courses: api.get("/courses"),
+        globalQuizzes: api.get("/quizzes/global"),
         questions: api.get("/quizzes/global-questions"),
         leaderboards: api.get("/leaderboards"),
         audit: api.get("/analytics/audit-logs"),
@@ -426,6 +588,7 @@ export default function SystemAdminDashboard() {
         terms: loaded.terms?.data || [],
         users: loaded.users?.data || [],
         courses: loaded.courses?.data || [],
+        globalQuizzes: loaded.globalQuizzes?.data || [],
         questions: loaded.questions?.data || [],
         leaderboards: loaded.leaderboards?.data || [],
         audit: loaded.audit?.data || [],
@@ -592,12 +755,8 @@ export default function SystemAdminDashboard() {
         {!loading && activeTab === "quiz" && (
           <section className="panel">
             <h2>Global Quiz Pool</h2>
-            <CreateQuestionForm onCreated={loadDashboard} />
-            <DataTable rows={data.questions} emptyTitle="No global questions yet" columns={[
-              { key: "question", label: "Question" },
-              { key: "correct_option", label: "Answer" },
-              { key: "created_at", label: "Created" }
-            ]} />
+            <GlobalQuizForm onCreated={loadDashboard} />
+            <GlobalQuizManager quizzes={data.globalQuizzes} onChanged={loadDashboard} />
           </section>
         )}
 

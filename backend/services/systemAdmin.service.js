@@ -15,6 +15,27 @@ function like(value) {
   return `%${value}%`;
 }
 
+function normalizeGrades(grades) {
+  const values = Array.isArray(grades) ? grades : String(grades || "").split(",");
+  const normalized = [...new Set(values.map((grade) => Number(grade)).filter((grade) => Number.isInteger(grade) && grade >= 1 && grade <= 9))];
+  if (!normalized.length) {
+    const error = new Error("Select at least one grade from 1 to 9");
+    error.statusCode = 400;
+    throw error;
+  }
+  return normalized.sort((a, b) => a - b);
+}
+
+function normalizeCorrectOption(value) {
+  const option = String(value || "").trim().toUpperCase();
+  if (!["A", "B", "C", "D"].includes(option)) {
+    const error = new Error("Correct option must be A, B, C, or D");
+    error.statusCode = 400;
+    throw error;
+  }
+  return option;
+}
+
 async function listSchools(params = {}) {
   const { limit, offset } = pagination(params);
   const values = [];
@@ -337,6 +358,172 @@ async function listGlobalQuestions(params = {}) {
   );
 }
 
+async function listGlobalQuizzes(params = {}) {
+  const { limit, offset } = pagination(params);
+  return list(
+    `select q.id, q.title, q.description, q.grade_levels, q.max_attempts, q.total_points,
+            q.time_limit_seconds, q.randomise_order, q.is_published, q.created_at,
+            count(qi.question_id)::int as question_count
+     from quizzes q
+     left join quiz_items qi on qi.quiz_id = q.id
+     where q.is_global = true and q.deleted_at is null
+     group by q.id
+     order by q.created_at desc
+     limit $1 offset $2`,
+    [limit, offset],
+    "select count(*) from quizzes where is_global = true and deleted_at is null",
+    []
+  );
+}
+
+async function getGlobalQuiz(quizId) {
+  const quiz = await one(
+    `select id, title, description, grade_levels, max_attempts, total_points, time_limit_seconds,
+            randomise_order, is_published, created_at
+     from quizzes
+     where id = $1 and is_global = true and deleted_at is null`,
+    [quizId]
+  );
+  if (!quiz) {
+    const error = new Error("Global quiz not found");
+    error.statusCode = 404;
+    throw error;
+  }
+  const questions = await query(
+    `select qq.id, qq.question, qq.option_a, qq.option_b, qq.option_c, qq.option_d, qq.correct_option, qi.sort_order
+     from quiz_items qi
+     join quiz_questions qq on qq.id = qi.question_id
+     where qi.quiz_id = $1 and qq.deleted_at is null
+     order by qi.sort_order`,
+    [quizId]
+  );
+  return { ...quiz, questions: questions.rows };
+}
+
+async function createGlobalQuiz(payload, user) {
+  const grades = normalizeGrades(payload.grade_levels);
+  if (!payload.title) {
+    const error = new Error("Quiz title is required");
+    error.statusCode = 400;
+    throw error;
+  }
+  return one(
+    `insert into quizzes (
+       school_id, term_id, title, description, grade_levels, max_attempts, total_points,
+       time_limit_seconds, randomise_order, is_global, is_published, created_by
+     )
+     values (null, null, $1, $2, $3, $4, 100, $5, $6, true, true, $7)
+     returning id, title, description, grade_levels, max_attempts, total_points, is_published, created_at`,
+    [
+      payload.title,
+      payload.description || null,
+      grades,
+      Number(payload.max_attempts || 1),
+      payload.time_limit_seconds ? Number(payload.time_limit_seconds) : null,
+      Boolean(payload.randomise_order),
+      user?.sub || null
+    ]
+  );
+}
+
+async function updateGlobalQuiz(quizId, payload) {
+  const grades = normalizeGrades(payload.grade_levels);
+  return one(
+    `update quizzes
+     set title = $2, description = $3, grade_levels = $4, max_attempts = $5,
+         time_limit_seconds = $6, randomise_order = $7, is_published = $8, updated_at = now()
+     where id = $1 and is_global = true and deleted_at is null
+     returning id, title, description, grade_levels, max_attempts, total_points, is_published, updated_at`,
+    [
+      quizId,
+      payload.title,
+      payload.description || null,
+      grades,
+      Number(payload.max_attempts || 1),
+      payload.time_limit_seconds ? Number(payload.time_limit_seconds) : null,
+      Boolean(payload.randomise_order),
+      payload.is_published !== false
+    ]
+  );
+}
+
+async function deleteGlobalQuiz(quizId) {
+  return one(
+    `update quizzes set deleted_at = now(), is_published = false, updated_at = now()
+     where id = $1 and is_global = true and deleted_at is null
+     returning id, title, deleted_at`,
+    [quizId]
+  );
+}
+
+async function addQuestionToGlobalQuiz(quizId, payload) {
+  const quiz = await one("select id from quizzes where id = $1 and is_global = true and deleted_at is null", [quizId]);
+  if (!quiz) {
+    const error = new Error("Global quiz not found");
+    error.statusCode = 404;
+    throw error;
+  }
+  return transaction(async (client) => {
+    const question = await client.query(
+      `insert into quiz_questions (question, option_a, option_b, option_c, option_d, correct_option, is_global)
+       values ($1, $2, $3, $4, $5, $6, true)
+       returning id, question, option_a, option_b, option_c, option_d, correct_option`,
+      [
+        payload.question,
+        payload.option_a,
+        payload.option_b,
+        payload.option_c,
+        payload.option_d,
+        normalizeCorrectOption(payload.correct_option)
+      ]
+    );
+    const order = await client.query("select coalesce(max(sort_order), 0) + 1 as next_order from quiz_items where quiz_id = $1", [quizId]);
+    await client.query(
+      "insert into quiz_items (quiz_id, question_id, sort_order) values ($1, $2, $3)",
+      [quizId, question.rows[0].id, order.rows[0].next_order]
+    );
+    return question.rows[0];
+  });
+}
+
+async function bulkAddQuestionsToGlobalQuiz(quizId, rows) {
+  const created = [];
+  const errors = [];
+  await transaction(async (client) => {
+    const quiz = await client.query("select id from quizzes where id = $1 and is_global = true and deleted_at is null", [quizId]);
+    if (!quiz.rows[0]) {
+      const error = new Error("Global quiz not found");
+      error.statusCode = 404;
+      throw error;
+    }
+    let orderResult = await client.query("select coalesce(max(sort_order), 0) + 1 as next_order from quiz_items where quiz_id = $1", [quizId]);
+    let sortOrder = Number(orderResult.rows[0].next_order);
+    for (const row of rows) {
+      if (!row.question || !row.option_a || !row.option_b || !row.option_c || !row.option_d || !row.correct_option) {
+        errors.push({ row: row.__rowNumber, error: "question, option_a, option_b, option_c, option_d, and correct_option are required" });
+        continue;
+      }
+      try {
+        const result = await client.query(
+          `insert into quiz_questions (question, option_a, option_b, option_c, option_d, correct_option, is_global)
+           values ($1, $2, $3, $4, $5, $6, true)
+           returning id, question`,
+          [row.question, row.option_a, row.option_b, row.option_c, row.option_d, normalizeCorrectOption(row.correct_option)]
+        );
+        await client.query(
+          "insert into quiz_items (quiz_id, question_id, sort_order) values ($1, $2, $3)",
+          [quizId, result.rows[0].id, sortOrder]
+        );
+        sortOrder += 1;
+        created.push(result.rows[0]);
+      } catch (error) {
+        errors.push({ row: row.__rowNumber, error: error.message });
+      }
+    }
+  });
+  return { created, errors };
+}
+
 async function createGlobalQuestion(payload) {
   return one(
     `insert into quiz_questions (question, option_a, option_b, option_c, option_d, correct_option, is_global)
@@ -446,6 +633,13 @@ module.exports = {
   createCourse,
   updateCourse,
   publishCourse,
+  listGlobalQuizzes,
+  getGlobalQuiz,
+  createGlobalQuiz,
+  updateGlobalQuiz,
+  deleteGlobalQuiz,
+  addQuestionToGlobalQuiz,
+  bulkAddQuestionsToGlobalQuiz,
   listGlobalQuestions,
   createGlobalQuestion,
   assignQuestionToSchools,

@@ -262,11 +262,22 @@ create table if not exists quizzes (
   description text,
   time_limit_seconds integer,
   randomise_order boolean not null default false,
+  is_global boolean not null default false,
+  grade_levels integer[] not null default '{}',
+  max_attempts integer not null default 1,
+  total_points integer not null default 100,
   is_published boolean not null default false,
   created_by uuid references users(id) on delete set null,
+  deleted_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table quizzes add column if not exists is_global boolean not null default false;
+alter table quizzes add column if not exists grade_levels integer[] not null default '{}';
+alter table quizzes add column if not exists max_attempts integer not null default 1;
+alter table quizzes add column if not exists total_points integer not null default 100;
+alter table quizzes add column if not exists deleted_at timestamptz;
 
 create table if not exists quiz_items (
   quiz_id uuid not null references quizzes(id) on delete cascade,
@@ -283,8 +294,28 @@ create table if not exists quiz_attempts (
   term_id uuid not null references terms(id) on delete restrict,
   score numeric(5,2) not null,
   time_taken_seconds integer,
+  assignment_id uuid,
+  attempt_number integer not null default 1,
+  answers jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now()
 );
+
+create table if not exists quiz_assignments (
+  id uuid primary key default gen_random_uuid(),
+  quiz_id uuid not null references quizzes(id) on delete cascade,
+  school_id uuid not null references schools(id) on delete cascade,
+  term_id uuid references terms(id) on delete restrict,
+  grade integer not null check (grade between 1 and 9),
+  assigned_by uuid references users(id) on delete set null,
+  max_attempts integer not null default 1 check (max_attempts between 1 and 20),
+  is_active boolean not null default true,
+  assigned_at timestamptz not null default now(),
+  unique (quiz_id, school_id, term_id, grade)
+);
+
+alter table quiz_attempts add column if not exists assignment_id uuid;
+alter table quiz_attempts add column if not exists attempt_number integer not null default 1;
+alter table quiz_attempts add column if not exists answers jsonb not null default '{}'::jsonb;
 
 create table if not exists typing_results (
   id uuid primary key default gen_random_uuid(),
@@ -461,6 +492,7 @@ alter table quiz_question_school_visibility enable row level security;
 alter table quizzes enable row level security;
 alter table quiz_items enable row level security;
 alter table quiz_attempts enable row level security;
+alter table quiz_assignments enable row level security;
 alter table typing_results enable row level security;
 alter table submissions enable row level security;
 alter table report_cards enable row level security;

@@ -80,6 +80,36 @@ function DataTable({ rows, columns, emptyTitle }) {
   );
 }
 
+function QuizTrendChart({ rows }) {
+  if (!rows?.length) return <EmptyState title="No weekly quiz trend yet" detail="When learners attempt quizzes across weeks, the line graph appears here." />;
+  const width = 520;
+  const height = 180;
+  const padding = 28;
+  const scores = rows.map((row) => Number(row.average_score || 0));
+  const points = rows.map((row, index) => {
+    const x = rows.length === 1 ? width / 2 : padding + (index * (width - padding * 2)) / (rows.length - 1);
+    const y = height - padding - (Number(row.average_score || 0) / 100) * (height - padding * 2);
+    return `${x},${y}`;
+  }).join(" ");
+  return (
+    <div className="trend-chart">
+      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Weekly quiz performance trend">
+        <line x1={padding} y1={height - padding} x2={width - padding} y2={height - padding} />
+        <line x1={padding} y1={padding} x2={padding} y2={height - padding} />
+        <polyline points={points} />
+        {rows.map((row, index) => {
+          const x = rows.length === 1 ? width / 2 : padding + (index * (width - padding * 2)) / (rows.length - 1);
+          const y = height - padding - (Number(row.average_score || 0) / 100) * (height - padding * 2);
+          return <circle key={row.week_start || index} cx={x} cy={y} r="5" />;
+        })}
+      </svg>
+      <div className="trend-labels">
+        {rows.map((row, index) => <span key={row.week_start || index}>Week {index + 1}: {Number(scores[index]).toFixed(1)}</span>)}
+      </div>
+    </div>
+  );
+}
+
 function AddLearnerForm({ streams, onCreated }) {
   const [form, setForm] = useState({
     full_name: "",
@@ -207,6 +237,142 @@ function CourseAllocationPanel({ learners, courses, onAllocated }) {
         {message ? <p className="success-text">{message}</p> : null}
       </form>
     </section>
+  );
+}
+
+function GradeChecks({ value, onChange, allowed }) {
+  const grades = value || [];
+  const allowedSet = allowed?.length ? allowed : Array.from({ length: 9 }, (_, index) => index + 1);
+  function toggle(grade) {
+    onChange(grades.includes(grade) ? grades.filter((item) => item !== grade) : [...grades, grade].sort((a, b) => a - b));
+  }
+  return (
+    <div className="grade-checks">
+      {allowedSet.map((grade) => (
+        <label className="check-row" key={grade}>
+          <input type="checkbox" checked={grades.includes(grade)} onChange={() => toggle(grade)} />
+          Grade {grade}
+        </label>
+      ))}
+    </div>
+  );
+}
+
+function CreateSchoolQuizForm({ onCreated }) {
+  const [form, setForm] = useState({ title: "", description: "", grade_levels: [1], max_attempts: 1 });
+  const [question, setQuestion] = useState({ question: "", option_a: "", option_b: "", option_c: "", option_d: "", correct_option: "A" });
+  const [createdQuiz, setCreatedQuiz] = useState(null);
+  const [error, setError] = useState("");
+
+  async function createQuiz(event) {
+    event.preventDefault();
+    setError("");
+    try {
+      const quiz = await api.post("/school-admin/school-quizzes", form);
+      setCreatedQuiz(quiz);
+      setForm({ title: "", description: "", grade_levels: [1], max_attempts: 1 });
+      onCreated();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function addQuestion(event) {
+    event.preventDefault();
+    setError("");
+    try {
+      await api.post(`/school-admin/school-quizzes/${createdQuiz.id}/questions`, question);
+      setQuestion({ question: "", option_a: "", option_b: "", option_c: "", option_d: "", correct_option: "A" });
+      onCreated();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  return (
+    <section className="panel compact-panel">
+      <h3>Create School Quiz</h3>
+      <form className="school-form" onSubmit={createQuiz}>
+        <label>Title<input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} required /></label>
+        <label>Description<textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></label>
+        <label>Max attempts<input type="number" min="1" max="20" value={form.max_attempts} onChange={(e) => setForm({ ...form, max_attempts: Number(e.target.value) })} /></label>
+        <GradeChecks value={form.grade_levels} onChange={(grades) => setForm({ ...form, grade_levels: grades })} />
+        {error ? <p className="form-error">{error}</p> : null}
+        <button type="submit"><Plus size={16} />Create quiz</button>
+      </form>
+      {createdQuiz ? (
+        <form className="question-form" onSubmit={addQuestion}>
+          <p className="success-text">Adding questions to {createdQuiz.title}</p>
+          <label>Question<textarea value={question.question} onChange={(e) => setQuestion({ ...question, question: e.target.value })} required /></label>
+          <div className="option-grid">
+            {["option_a", "option_b", "option_c", "option_d"].map((key) => <label key={key}>{key.replace("_", " ").toUpperCase()}<input value={question[key]} onChange={(e) => setQuestion({ ...question, [key]: e.target.value })} required /></label>)}
+          </div>
+          <label>Correct option<select value={question.correct_option} onChange={(e) => setQuestion({ ...question, correct_option: e.target.value })}><option>A</option><option>B</option><option>C</option><option>D</option></select></label>
+          <button type="submit"><Plus size={16} />Add question</button>
+        </form>
+      ) : null}
+    </section>
+  );
+}
+
+function QuizAssignmentPanel({ globalQuizzes, schoolQuizzes, assignments, performance, onRefresh }) {
+  const [selectedQuizId, setSelectedQuizId] = useState("");
+  const [grades, setGrades] = useState([]);
+  const [maxAttempts, setMaxAttempts] = useState(1);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+
+  const allQuizzes = [...globalQuizzes, ...schoolQuizzes];
+  const selectedQuiz = allQuizzes.find((quiz) => quiz.id === selectedQuizId);
+
+  async function assign(event) {
+    event.preventDefault();
+    setError("");
+    setMessage("");
+    try {
+      const result = await api.post(`/school-admin/quizzes/${selectedQuizId}/assign`, { grades, max_attempts: Number(maxAttempts || 1) });
+      setMessage(`${result.count} quiz assignment rows saved.`);
+      setGrades([]);
+      setSelectedQuizId("");
+      onRefresh();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  return (
+    <div className="quiz-school-grid">
+      <section className="panel compact-panel">
+        <h3>Assign Quiz To Grade</h3>
+        <form className="school-form" onSubmit={assign}>
+          <label>Quiz<select value={selectedQuizId} onChange={(e) => { setSelectedQuizId(e.target.value); setGrades([]); }} required><option value="">Select quiz</option>{allQuizzes.map((quiz) => <option key={quiz.id} value={quiz.id}>{quiz.title} {quiz.is_global ? "(global)" : "(school)"}</option>)}</select></label>
+          {selectedQuiz ? <p className="helper-text">Available to Grade {selectedQuiz.grade_levels?.join("-")}. The backend enforces this if someone tries another grade.</p> : null}
+          <GradeChecks value={grades} allowed={selectedQuiz?.grade_levels} onChange={setGrades} />
+          <label>Attempts allowed<input type="number" min="1" max="20" value={maxAttempts} onChange={(e) => setMaxAttempts(e.target.value)} /></label>
+          {error ? <p className="form-error">{error}</p> : null}
+          {message ? <p className="success-text">{message}</p> : null}
+          <button type="submit"><CheckCircle2 size={16} />Assign quiz</button>
+        </form>
+      </section>
+      <section className="panel compact-panel">
+        <h3>Assignments</h3>
+        <DataTable rows={assignments} emptyTitle="No quizzes assigned yet" columns={[
+          { key: "title", label: "Quiz" },
+          { key: "grade", label: "Grade" },
+          { key: "learner_count", label: "Learners" },
+          { key: "max_attempts", label: "Attempts" }
+        ]} />
+      </section>
+      <section className="panel compact-panel">
+        <h3>Quiz Performance</h3>
+        <DataTable rows={performance} emptyTitle="No quiz attempts yet" columns={[
+          { key: "quiz_title", label: "Quiz", render: (row) => row.quiz_title || "Untitled quiz" },
+          { key: "attempts", label: "Attempts" },
+          { key: "average_score", label: "Avg", render: (row) => row.average_score ? Number(row.average_score).toFixed(1) : "-" },
+          { key: "expectation", label: "Band" }
+        ]} />
+      </section>
+    </div>
   );
 }
 
@@ -359,6 +525,7 @@ function LearnerDetailPanel({ detail, streams, terms, onClose, onSaved, onTermCh
             <Stat label="Typing WPM" value={detail.report?.typing_summary?.average_wpm == null ? "-" : Number(detail.report.typing_summary.average_wpm).toFixed(1)} />
           </div>
         </section>
+        <section className="panel compact-panel"><h3>Weekly Quiz Trend</h3><QuizTrendChart rows={detail.weekly_quiz_trend} /></section>
         <section className="panel compact-panel"><h3>Course History</h3><DataTable rows={detail.course_history} emptyTitle="No course history yet" columns={[{ key: "course_name", label: "Course" }, { key: "term_name", label: "Term" }, { key: "year", label: "Year" }, { key: "status", label: "Status" }]} /></section>
         <section className="panel compact-panel"><h3>Submissions</h3><DataTable rows={detail.submissions} emptyTitle="No submissions yet" columns={[{ key: "file_url", label: "File" }, { key: "status", label: "Status" }, { key: "feedback", label: "Feedback", render: (row) => row.feedback || "-" }]} /></section>
         <section className="panel compact-panel"><h3>Reports</h3><DataTable rows={detail.reports} emptyTitle="No report cards yet" columns={[{ key: "year", label: "Year" }, { key: "term_name", label: "Term" }, { key: "published_at", label: "Published", render: (row) => row.published_at ? formatDate(row.published_at) : "-" }]} /></section>
@@ -440,7 +607,11 @@ export default function SchoolAdminDashboard() {
     preferences: null,
     streams: [],
     courses: [],
-    terms: []
+    terms: [],
+    globalQuizzes: [],
+    schoolQuizzes: [],
+    quizAssignments: [],
+    quizPerformance: []
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -469,7 +640,11 @@ export default function SchoolAdminDashboard() {
         preferences: api.get("/school-admin/preferences"),
         streams: api.get("/school-admin/streams"),
         courses: api.get("/school-admin/courses"),
-        terms: api.get("/school-admin/terms")
+        terms: api.get("/school-admin/terms"),
+        globalQuizzes: api.get("/school-admin/global-quizzes"),
+        schoolQuizzes: api.get("/school-admin/school-quizzes"),
+        quizAssignments: api.get("/school-admin/quiz-assignments"),
+        quizPerformance: api.get("/school-admin/quiz-performance")
       };
       const entries = await Promise.all(Object.entries(requests).map(async ([key, promise]) => {
         try {
@@ -496,7 +671,11 @@ export default function SchoolAdminDashboard() {
         preferences: data.preferences,
         streams: data.streams || [],
         courses: data.courses || [],
-        terms: data.terms || []
+        terms: data.terms || [],
+        globalQuizzes: data.globalQuizzes || [],
+        schoolQuizzes: data.schoolQuizzes || [],
+        quizAssignments: data.quizAssignments || [],
+        quizPerformance: data.quizPerformance || []
       });
     } catch (err) {
       setError(err.message);
@@ -673,14 +852,27 @@ export default function SchoolAdminDashboard() {
         )}
 
         {!loading && activeTab === "quizzes" && (
-          <section className="panel">
-            <h2>Quiz Results Overview</h2>
+          <section className="school-section">
+            <section className="panel">
+              <h2>Global Quizzes</h2>
+              <DataTable rows={state.globalQuizzes} emptyTitle="No global quizzes published yet" columns={[
+                { key: "title", label: "Quiz" },
+                { key: "grade_levels", label: "Grades", render: (row) => row.grade_levels?.join(", ") || "-" },
+                { key: "question_count", label: "Questions" },
+                { key: "max_attempts", label: "Default attempts" }
+              ]} />
+            </section>
+            <QuizAssignmentPanel globalQuizzes={state.globalQuizzes} schoolQuizzes={state.schoolQuizzes} assignments={state.quizAssignments} performance={state.quizPerformance} onRefresh={loadDashboard} />
+            <CreateSchoolQuizForm onCreated={loadDashboard} />
+            <section className="panel">
+              <h2>Quiz Results Overview</h2>
             <DataTable rows={state.quizzes} emptyTitle="No quiz attempts yet" columns={[
               { key: "quiz_title", label: "Quiz", render: (row) => row.quiz_title || "Untitled quiz" },
               { key: "learner_name", label: "Learner" },
               { key: "score", label: "Score" },
               { key: "created_at", label: "Date", render: (row) => formatDate(row.created_at) }
             ]} />
+            </section>
           </section>
         )}
 

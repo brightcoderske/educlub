@@ -15,7 +15,15 @@ function wrap(handler) {
 const dashboard = wrap(async (req, res) => {
   res.json(await service.dashboard(req.user, req.query));
 });
+const quizForTaking = wrap(async (req, res) => {
+  res.json(await service.quizForTaking(req.user, req.params.id));
+});
+const submitQuizAttempt = wrap(async (req, res) => {
+  res.status(201).json(await service.submitQuizAttempt(req.user, req.params.id, req.body));
+});
 
 module.exports = {
-  dashboard
+  dashboard,
+  quizForTaking,
+  submitQuizAttempt
 };

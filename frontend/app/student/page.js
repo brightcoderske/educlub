@@ -5,6 +5,7 @@ import {
   Award,
   BarChart3,
   BookOpen,
+  CheckCircle2,
   FileText,
   Gauge,
   LayoutDashboard,
@@ -69,6 +70,35 @@ function CourseBars({ rows }) {
   );
 }
 
+function TrendChart({ rows }) {
+  if (!rows?.length) return <EmptyState title="No weekly quiz trend yet." />;
+  const width = 520;
+  const height = 170;
+  const padding = 26;
+  const points = rows.map((row, index) => {
+    const x = rows.length === 1 ? width / 2 : padding + (index * (width - padding * 2)) / (rows.length - 1);
+    const y = height - padding - (Number(row.average_score || 0) / 100) * (height - padding * 2);
+    return `${x},${y}`;
+  }).join(" ");
+  return (
+    <div className="student-trend-chart">
+      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Weekly quiz trend">
+        <line x1={padding} y1={height - padding} x2={width - padding} y2={height - padding} />
+        <line x1={padding} y1={padding} x2={padding} y2={height - padding} />
+        <polyline points={points} />
+        {rows.map((row, index) => {
+          const x = rows.length === 1 ? width / 2 : padding + (index * (width - padding * 2)) / (rows.length - 1);
+          const y = height - padding - (Number(row.average_score || 0) / 100) * (height - padding * 2);
+          return <circle key={row.week_start || index} cx={x} cy={y} r="5" />;
+        })}
+      </svg>
+      <div className="student-trend-labels">
+        {rows.map((row, index) => <span key={row.week_start || index}>Week {index + 1}: {Number(row.average_score || 0).toFixed(1)}</span>)}
+      </div>
+    </div>
+  );
+}
+
 function DataTable({ rows, columns, emptyTitle }) {
   if (!rows?.length) return <EmptyState title={emptyTitle} />;
   return (
@@ -93,6 +123,9 @@ export default function StudentPage() {
   const [activeTab, setActiveTab] = useState("overview");
   const [user, setUser] = useState(null);
   const [dashboard, setDashboard] = useState(null);
+  const [activeQuiz, setActiveQuiz] = useState(null);
+  const [answers, setAnswers] = useState({});
+  const [quizResult, setQuizResult] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -124,6 +157,29 @@ export default function StudentPage() {
   }, []);
 
   const summary = dashboard?.summary || {};
+
+  async function openQuiz(quizId) {
+    setError("");
+    setQuizResult(null);
+    setAnswers({});
+    try {
+      setActiveQuiz(await api.get(`/student/quizzes/${quizId}`));
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function submitQuiz(event) {
+    event.preventDefault();
+    setError("");
+    try {
+      const result = await api.post(`/student/quizzes/${activeQuiz.quiz_id}/attempts`, { answers });
+      setQuizResult(result);
+      await loadDashboard();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
 
   return (
     <main className="student-shell">
@@ -183,6 +239,10 @@ export default function StudentPage() {
                 { key: "updated_at", label: "Updated", render: (row) => formatDate(row.updated_at) }
               ]} />
             </section>
+            <section className="student-panel">
+              <h2>Weekly Quiz Trend</h2>
+              <TrendChart rows={dashboard.weekly_quiz_trend} />
+            </section>
           </div>
         )}
 
@@ -235,17 +295,70 @@ export default function StudentPage() {
         )}
 
         {!loading && dashboard && activeTab === "quizzes" && (
-          <section className="student-panel">
-            <h2>Quiz Results</h2>
-            <DataTable rows={dashboard.quiz_results} emptyTitle="No quiz attempts for this term." columns={[
-              { key: "quiz_title", label: "Quiz", render: (row) => row.quiz_title || "Untitled quiz" },
-              { key: "score", label: "Score" },
-              { key: "time_taken_seconds", label: "Time" },
-              { key: "created_at", label: "Date", render: (row) => formatDate(row.created_at) }
-            ]} />
-          </section>
+          <div className="student-section">
+            <section className="student-panel">
+              <h2>Assigned Quizzes</h2>
+              <DataTable rows={dashboard.assigned_quizzes} emptyTitle="No quizzes assigned for this term." columns={[
+                { key: "title", label: "Quiz" },
+                { key: "attempts_used", label: "Attempts", render: (row) => `${row.attempts_used}/${row.max_attempts}` },
+                { key: "best_score", label: "Best", render: (row) => row.best_score == null ? "-" : Number(row.best_score).toFixed(1) },
+                { key: "action", label: "Action", render: (row) => row.can_attempt ? <button type="button" onClick={() => openQuiz(row.quiz_id)}>Take quiz</button> : "Attempts used" }
+              ]} />
+            </section>
+            <section className="student-panel">
+              <h2>Quiz Results</h2>
+              <DataTable rows={dashboard.quiz_results} emptyTitle="No quiz attempts for this term." columns={[
+                { key: "quiz_title", label: "Quiz", render: (row) => row.quiz_title || "Untitled quiz" },
+                { key: "score", label: "Score" },
+                { key: "time_taken_seconds", label: "Time" },
+                { key: "created_at", label: "Date", render: (row) => formatDate(row.created_at) }
+              ]} />
+            </section>
+          </div>
         )}
       </section>
+      {activeQuiz ? (
+        <div className="quiz-take-backdrop">
+          <section className="quiz-take-panel" role="dialog" aria-modal="true" aria-label={activeQuiz.title}>
+            <div className="quiz-take-header">
+              <div>
+                <p className="eyebrow">Quiz</p>
+                <h2>{activeQuiz.title}</h2>
+                <p>{activeQuiz.description || "Answer each question and submit when ready."}</p>
+              </div>
+              <button type="button" className="student-secondary" onClick={() => setActiveQuiz(null)}>Close</button>
+            </div>
+            {quizResult ? (
+              <div className="quiz-result-card">
+                <CheckCircle2 size={28} />
+                <strong>{Number(quizResult.score).toFixed(1)} / 100</strong>
+                <span>{quizResult.expectation}</span>
+                <button type="button" onClick={() => setActiveQuiz(null)}>Done</button>
+              </div>
+            ) : (
+              <form className="quiz-take-form" onSubmit={submitQuiz}>
+                {activeQuiz.questions.map((question, index) => (
+                  <fieldset key={question.id}>
+                    <legend>{index + 1}. {question.question}</legend>
+                    {[
+                      ["A", question.option_a],
+                      ["B", question.option_b],
+                      ["C", question.option_c],
+                      ["D", question.option_d]
+                    ].map(([option, label]) => (
+                      <label className="quiz-option" key={option}>
+                        <input type="radio" name={question.id} value={option} checked={answers[question.id] === option} onChange={() => setAnswers({ ...answers, [question.id]: option })} required />
+                        <span>{option}. {label}</span>
+                      </label>
+                    ))}
+                  </fieldset>
+                ))}
+                <button type="submit"><CheckCircle2 size={16} />Submit quiz</button>
+              </form>
+            )}
+          </section>
+        </div>
+      ) : null}
     </main>
   );
 }

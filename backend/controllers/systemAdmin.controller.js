@@ -1,4 +1,5 @@
 const service = require("../services/systemAdmin.service");
+const ExcelJS = require("exceljs");
 
 function wrap(handler) {
   return async (req, res, next) => {
@@ -36,6 +37,97 @@ const createCourse = wrap(async (req, res) => res.status(201).json(await service
 const updateCourse = wrap(async (req, res) => res.json(await service.updateCourse(req.params.id, req.body)));
 const publishCourse = wrap(async (req, res) => res.json(await service.publishCourse(req.params.id, req.body.is_published)));
 
+function parseCsv(text) {
+  const rows = [];
+  let current = "";
+  let record = [];
+  let quoted = false;
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    const next = text[index + 1];
+    if (char === '"' && quoted && next === '"') {
+      current += '"';
+      index += 1;
+    } else if (char === '"') {
+      quoted = !quoted;
+    } else if (char === "," && !quoted) {
+      record.push(current);
+      current = "";
+    } else if ((char === "\n" || char === "\r") && !quoted) {
+      if (char === "\r" && next === "\n") index += 1;
+      record.push(current);
+      if (record.some((value) => value.trim())) rows.push(record);
+      record = [];
+      current = "";
+    } else {
+      current += char;
+    }
+  }
+  record.push(current);
+  if (record.some((value) => value.trim())) rows.push(record);
+  return rows;
+}
+
+async function parseQuestionUpload(file) {
+  const extension = file.originalname.toLowerCase().split(".").pop();
+  let records = [];
+  if (extension === "csv") {
+    const rows = parseCsv(file.buffer.toString("utf8"));
+    const headers = (rows.shift() || []).map((header) => String(header || "").trim().toLowerCase().replace(/\s+/g, "_"));
+    records = rows.map((row, index) => {
+      const record = { __rowNumber: index + 2 };
+      headers.forEach((header, columnIndex) => {
+        record[header] = row[columnIndex] || "";
+      });
+      return record;
+    });
+  } else if (extension === "xlsx") {
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(file.buffer);
+    const worksheet = workbook.worksheets[0];
+    const headers = [];
+    worksheet.getRow(1).eachCell((cell, columnNumber) => {
+      headers[columnNumber] = String(cell.value || "").trim().toLowerCase().replace(/\s+/g, "_");
+    });
+    worksheet.eachRow((row, rowNumber) => {
+      if (rowNumber === 1) return;
+      const record = { __rowNumber: rowNumber };
+      headers.forEach((header, columnNumber) => {
+        if (!header) return;
+        record[header] = row.getCell(columnNumber).value || "";
+      });
+      records.push(record);
+    });
+  } else {
+    const error = new Error("Upload .csv or .xlsx only");
+    error.statusCode = 400;
+    throw error;
+  }
+  return records.map((record) => ({
+    __rowNumber: record.__rowNumber,
+    question: record.question,
+    option_a: record.option_a || record.a,
+    option_b: record.option_b || record.b,
+    option_c: record.option_c || record.c,
+    option_d: record.option_d || record.d,
+    correct_option: record.correct_option || record.answer
+  }));
+}
+
+const listGlobalQuizzes = wrap(async (req, res) => res.json(await service.listGlobalQuizzes(req.query)));
+const getGlobalQuiz = wrap(async (req, res) => res.json(await service.getGlobalQuiz(req.params.id)));
+const createGlobalQuiz = wrap(async (req, res) => res.status(201).json(await service.createGlobalQuiz(req.body, req.user)));
+const updateGlobalQuiz = wrap(async (req, res) => res.json(await service.updateGlobalQuiz(req.params.id, req.body)));
+const deleteGlobalQuiz = wrap(async (req, res) => res.json(await service.deleteGlobalQuiz(req.params.id)));
+const addQuestionToGlobalQuiz = wrap(async (req, res) => res.status(201).json(await service.addQuestionToGlobalQuiz(req.params.id, req.body)));
+const bulkAddQuestionsToGlobalQuiz = wrap(async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: { message: "Question CSV/XLSX file is required" } });
+  }
+  const rows = await parseQuestionUpload(req.file);
+  return res.status(201).json(await service.bulkAddQuestionsToGlobalQuiz(req.params.id, rows));
+});
+
 const listGlobalQuestions = wrap(async (req, res) => res.json(await service.listGlobalQuestions(req.query)));
 const createGlobalQuestion = wrap(async (req, res) => res.status(201).json(await service.createGlobalQuestion(req.body)));
 const assignQuestionToSchools = wrap(async (req, res) => res.json(await service.assignQuestionToSchools(req.params.id, req.body.school_ids || [])));
@@ -65,6 +157,13 @@ module.exports = {
   createCourse,
   updateCourse,
   publishCourse,
+  listGlobalQuizzes,
+  getGlobalQuiz,
+  createGlobalQuiz,
+  updateGlobalQuiz,
+  deleteGlobalQuiz,
+  addQuestionToGlobalQuiz,
+  bulkAddQuestionsToGlobalQuiz,
   listGlobalQuestions,
   createGlobalQuestion,
   assignQuestionToSchools,

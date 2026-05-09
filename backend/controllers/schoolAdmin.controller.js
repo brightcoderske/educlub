@@ -100,6 +100,13 @@ const listSubmissions = wrap(async (req, res) => res.json(await service.listSubm
 const reviewSubmission = wrap(async (req, res) => res.json(await service.reviewSubmission(req.user, req.params.id, req.body)));
 const typingResults = wrap(async (req, res) => res.json(await service.typingResults(req.user, req.query)));
 const quizResults = wrap(async (req, res) => res.json(await service.quizResults(req.user, req.query)));
+const globalQuizzes = wrap(async (req, res) => res.json(await service.globalQuizzes(req.user)));
+const schoolQuizzes = wrap(async (req, res) => res.json(await service.schoolQuizzes(req.user)));
+const createSchoolQuiz = wrap(async (req, res) => res.status(201).json(await service.createSchoolQuiz(req.user, req.body)));
+const addQuestionToSchoolQuiz = wrap(async (req, res) => res.status(201).json(await service.addQuestionToSchoolQuiz(req.user, req.params.id, req.body)));
+const assignQuiz = wrap(async (req, res) => res.json(await service.assignQuiz(req.user, req.params.id, req.body)));
+const quizAssignments = wrap(async (req, res) => res.json(await service.quizAssignments(req.user, req.query)));
+const quizPerformance = wrap(async (req, res) => res.json(await service.quizPerformance(req.user, req.query)));
 const leaderboards = wrap(async (req, res) => res.json(await service.leaderboards(req.user, req.query)));
 const preferences = wrap(async (req, res) => res.json(await service.preferences(req.user) || await service.ensurePreferences(req.user)));
 const updatePreferences = wrap(async (req, res) => res.json(await service.updatePreferences(req.user, req.body)));
@@ -126,6 +133,13 @@ module.exports = {
   reviewSubmission,
   typingResults,
   quizResults,
+  globalQuizzes,
+  schoolQuizzes,
+  createSchoolQuiz,
+  addQuestionToSchoolQuiz,
+  assignQuiz,
+  quizAssignments,
+  quizPerformance,
   leaderboards,
   preferences,
   updatePreferences,
