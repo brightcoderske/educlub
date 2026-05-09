@@ -1,0 +1,152 @@
+@import "../styles/variables.css";
+@import "../styles/forms.css";
+@import "../styles/tables.css";
+@import "../styles/animations.css";
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+}
+
+body {
+  font-family: Arial, Helvetica, sans-serif;
+  background: var(--educlub-bg);
+  color: var(--educlub-ink);
+}
+
+a {
+  color: inherit;
+}
+
+.auth-shell {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: minmax(320px, 560px) minmax(320px, 440px);
+  align-items: center;
+  justify-content: center;
+  gap: 28px;
+  padding: 24px;
+  background:
+    radial-gradient(circle at 18% 20%, rgba(255, 214, 102, 0.42), transparent 24%),
+    radial-gradient(circle at 78% 18%, rgba(52, 211, 153, 0.28), transparent 25%),
+    linear-gradient(135deg, #f4fbff 0%, #fff7e8 48%, #eef9f1 100%);
+}
+
+.welcome-panel {
+  min-height: 560px;
+  border-radius: 24px;
+  padding: 40px;
+  color: #12324a;
+  background:
+    linear-gradient(150deg, rgba(255, 255, 255, 0.86), rgba(255, 255, 255, 0.52)),
+    linear-gradient(135deg, #ffe08a, #9be7c6 55%, #89c6ff);
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  box-shadow: 0 24px 70px rgba(35, 66, 96, 0.18);
+  display: grid;
+  align-content: space-between;
+  overflow: hidden;
+}
+
+.sun-badge {
+  width: 76px;
+  height: 76px;
+  border-radius: 22px;
+  display: grid;
+  place-items: center;
+  background: #17324d;
+  color: #fff;
+  font-weight: 900;
+  font-size: 1.35rem;
+  box-shadow: 0 14px 30px rgba(23, 50, 77, 0.24);
+}
+
+.welcome-panel h1 {
+  margin: 0;
+  font-size: 4.6rem;
+  line-height: 1;
+}
+
+.welcome-copy {
+  max-width: 460px;
+  font-size: 1.12rem;
+  line-height: 1.7;
+  color: #23435d;
+}
+
+.mini-board {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.mini-board span,
+.mini-board strong {
+  min-height: 74px;
+  border-radius: 18px;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.84);
+}
+
+.mini-board strong {
+  background: #17324d;
+  color: #fff;
+}
+
+.auth-panel {
+  width: min(440px, 100%);
+  background: #fff;
+  border: 1px solid rgba(215, 226, 238, 0.95);
+  border-radius: 24px;
+  padding: 34px;
+  display: grid;
+  gap: 24px;
+  box-shadow: 0 24px 60px rgba(35, 66, 96, 0.16);
+}
+
+.auth-panel h2 {
+  margin: 0;
+  font-size: 2rem;
+}
+
+.form-stack {
+  display: grid;
+  gap: 14px;
+}
+
+.form-error {
+  color: #9f1d14;
+  margin: 0;
+  font-weight: 700;
+}
+
+.page-shell {
+  min-height: 100vh;
+  padding: 32px;
+}
+
+@media (max-width: 880px) {
+  .auth-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .welcome-panel {
+    min-height: auto;
+    gap: 36px;
+  }
+
+  .welcome-panel h1 {
+    font-size: 3.2rem;
+  }
+
+  .mini-board {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

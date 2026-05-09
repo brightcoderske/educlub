@@ -1,0 +1,3 @@
+-- No seed or dummy data.
+-- The System Admin account must be created deliberately for each deployment
+-- using an approved operations process with a real email and secure password.
