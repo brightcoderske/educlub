@@ -1,6 +1,6 @@
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
-const { one } = require("../config/database");
+const { one, query } = require("../config/database");
 const { env } = require("../config/env");
 
 function signAccessToken(user) {
@@ -27,7 +27,7 @@ async function login({ identifier, password }) {
 
   const normalized = identifier.trim().toLowerCase();
   const user = await one(
-    `select id, school_id, role, full_name, email, username, password_hash, is_active, force_password_change, two_factor_enabled
+    `select id, school_id, role, coalesce(full_name, name) as full_name, email, username, password_hash, is_active, force_password_change, two_factor_enabled, last_login_at
      from users
      where deleted_at is null and (lower(email) = $1 or lower(username) = $1)
      limit 1`,
@@ -41,6 +41,11 @@ async function login({ identifier, password }) {
     throw authError;
   }
 
+  await query(
+    "update users set previous_login_at = last_login_at, last_login_at = now(), updated_at = now() where id = $1",
+    [user.id]
+  );
+
   return {
     accessToken: signAccessToken(user),
     user: {
@@ -51,7 +56,8 @@ async function login({ identifier, password }) {
       email: user.email,
       username: user.username,
       force_password_change: user.force_password_change,
-      two_factor_enabled: user.two_factor_enabled
+      two_factor_enabled: user.two_factor_enabled,
+      previous_login_at: user.last_login_at
     }
   };
 }

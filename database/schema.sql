@@ -114,6 +114,8 @@ alter table users add column if not exists parent_name text;
 alter table users add column if not exists parent_email text;
 alter table users add column if not exists parent_phone text;
 alter table users add column if not exists deleted_at timestamptz;
+alter table users add column if not exists last_login_at timestamptz;
+alter table users add column if not exists previous_login_at timestamptz;
 alter table users add column if not exists created_at timestamptz not null default now();
 alter table users add column if not exists updated_at timestamptz not null default now();
 
@@ -360,6 +362,19 @@ create table if not exists school_preferences (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists school_streams (
+  id uuid primary key default gen_random_uuid(),
+  school_id uuid not null references schools(id) on delete cascade,
+  grade integer,
+  name text not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (school_id, grade, name)
+);
+
+create unique index if not exists school_streams_school_name_unique
+  on school_streams (school_id, lower(name));
+
 create table if not exists audit_logs (
   id uuid primary key default gen_random_uuid(),
   actor_user_id uuid references users(id) on delete set null,
@@ -451,4 +466,5 @@ alter table submissions enable row level security;
 alter table report_cards enable row level security;
 alter table leaderboard_entries enable row level security;
 alter table school_preferences enable row level security;
+alter table school_streams enable row level security;
 alter table audit_logs enable row level security;

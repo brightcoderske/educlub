@@ -205,6 +205,10 @@
   gap: 18px;
 }
 
+.panel h3 {
+  margin: 0;
+}
+
 .inline-form,
 .question-form {
   display: grid;
@@ -218,6 +222,130 @@
 .inline-form {
   grid-template-columns: repeat(4, minmax(0, 1fr));
   align-items: end;
+}
+
+.detail-form {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.stack-form {
+  display: grid;
+  gap: 12px;
+}
+
+.school-list-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.school-list-card {
+  min-height: 128px;
+  padding: 18px;
+  background: #fff;
+  color: #172033;
+  border: 1px solid #dfe6ef;
+  box-shadow: 0 14px 30px rgba(35, 66, 96, 0.08);
+  display: grid;
+  align-content: start;
+  justify-items: start;
+  text-align: left;
+}
+
+.school-list-card.active,
+.school-list-card:hover {
+  background: #eef8ff;
+  border-color: #82b7ee;
+}
+
+.school-list-card strong {
+  font-size: 1.1rem;
+}
+
+.school-list-card span,
+.school-list-card small {
+  color: #65758b;
+}
+
+.school-detail-panel {
+  display: grid;
+  gap: 18px;
+  padding: 22px;
+  border-radius: 22px;
+  background: #f8fbff;
+  border: 1px solid #dfe8f2;
+}
+
+.detail-header,
+.danger-zone,
+.admin-row {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.detail-header h2,
+.detail-header p {
+  margin: 0;
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: minmax(300px, 460px) minmax(0, 1fr);
+  gap: 18px;
+}
+
+.admin-row {
+  padding: 14px;
+  border-radius: 16px;
+  background: #fff;
+  border: 1px solid #dfe8f2;
+  align-items: end;
+}
+
+.admin-row div {
+  display: grid;
+  gap: 4px;
+}
+
+.admin-row span {
+  color: #65758b;
+}
+
+.secondary-button {
+  background: #e8f1fb;
+  color: #17324d;
+  box-shadow: none;
+}
+
+.success-note {
+  background: #eaf8f0;
+  border: 1px solid #b8e4c8;
+  color: #17633e;
+  padding: 12px 14px;
+  border-radius: 12px;
+}
+
+.danger-zone {
+  padding: 16px;
+  border-radius: 18px;
+  border: 1px solid #ffc9c3;
+  background: #fff7f5;
+}
+
+.danger-zone div {
+  display: grid;
+  gap: 4px;
+}
+
+.danger-zone span {
+  color: #76433d;
+}
+
+.danger-button {
+  background: #c83224;
+  box-shadow: 0 10px 22px rgba(200, 50, 36, 0.18);
 }
 
 .split-forms {
@@ -317,12 +445,22 @@ tr:hover td {
 
   .metric-grid,
   .inline-form,
-  .option-grid {
+  .option-grid,
+  .school-list-grid,
+  .detail-grid,
+  .detail-form {
     grid-template-columns: 1fr;
   }
 
   .admin-header {
     align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .detail-header,
+  .danger-zone,
+  .admin-row {
+    align-items: stretch;
     flex-direction: column;
   }
 }

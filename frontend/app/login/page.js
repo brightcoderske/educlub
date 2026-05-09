@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { ArrowRight, LockKeyhole, Mail, Sparkles } from "lucide-react";
 import { login } from "../../lib/auth";
 
 export default function LoginPage() {
@@ -47,21 +48,32 @@ export default function LoginPage() {
         </div>
       </section>
       <section className="auth-panel">
-        <div>
+        <div className="auth-panel-header">
+          <span className="auth-kicker"><Sparkles size={15} />Welcome back</span>
           <p className="eyebrow">Welcome back</p>
           <h2>Sign in to continue</h2>
+          <p>Open your EduClub workspace and keep every learner moving forward.</p>
         </div>
         <form className="form-stack" onSubmit={handleSubmit}>
-          <label>
-            Email or username
-            <input value={identifier} onChange={(event) => setIdentifier(event.target.value)} autoComplete="username" required />
+          <label className="auth-field">
+            <span>Email or username</span>
+            <div className="input-shell">
+              <Mail size={18} />
+              <input value={identifier} onChange={(event) => setIdentifier(event.target.value)} autoComplete="username" placeholder="admin@school.com" required />
+            </div>
           </label>
-          <label>
-            Password
-            <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" required />
+          <label className="auth-field">
+            <span>Password</span>
+            <div className="input-shell">
+              <LockKeyhole size={18} />
+              <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" placeholder="Enter password" required />
+            </div>
           </label>
           {error ? <p className="form-error">{error}</p> : null}
-          <button type="submit" disabled={loading}>{loading ? "Signing in..." : "Sign in"}</button>
+          <button className="auth-submit" type="submit" disabled={loading}>
+            {loading ? "Signing in..." : "Sign in"}
+            <ArrowRight size={18} />
+          </button>
         </form>
       </section>
     </main>

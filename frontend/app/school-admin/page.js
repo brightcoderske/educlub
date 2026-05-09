@@ -1,8 +1,7 @@
+import SchoolAdminDashboard from "../../modules/dashboard/SchoolAdminDashboard";
+import "../../modules/dashboard/dashboard.css";
+import "../../modules/dashboard/school-dashboard.css";
+
 export default function SchoolAdminPage() {
-  return (
-    <main className="page-shell">
-      <h1>School Admin</h1>
-      <p>This role will be built after the System Admin slice is stable.</p>
-    </main>
-  );
+  return <SchoolAdminDashboard />;
 }

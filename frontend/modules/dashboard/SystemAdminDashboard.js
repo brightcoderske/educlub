@@ -16,7 +16,6 @@ import {
 } from "lucide-react";
 import { api } from "../../lib/api";
 import { currentUser, logout } from "../../lib/auth";
-import "./dashboard.css";
 
 const tabs = [
   { id: "overview", label: "Overview", icon: Activity },
@@ -195,6 +194,176 @@ function CreateQuestionForm({ onCreated }) {
   );
 }
 
+function CreateSchoolAdminForm({ schools, onCreated }) {
+  const [form, setForm] = useState({ full_name: "", email: "", password: "", school_id: "" });
+  const [error, setError] = useState("");
+
+  function update(key, value) {
+    setForm((current) => ({ ...current, [key]: value }));
+  }
+
+  async function submit(event) {
+    event.preventDefault();
+    setError("");
+    try {
+      await api.post("/users/school-admins", form);
+      setForm({ full_name: "", email: "", password: "", school_id: "" });
+      onCreated();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  return (
+    <form className="inline-form" onSubmit={submit}>
+      <label>Full name<input value={form.full_name} onChange={(e) => update("full_name", e.target.value)} required /></label>
+      <label>Email<input type="email" value={form.email} onChange={(e) => update("email", e.target.value)} required /></label>
+      <label>Temporary password<input type="password" value={form.password} onChange={(e) => update("password", e.target.value)} required /></label>
+      <label>School<select value={form.school_id} onChange={(e) => update("school_id", e.target.value)} required><option value="">Select school</option>{schools.map((school) => <option key={school.id} value={school.id}>{school.name}</option>)}</select></label>
+      {error ? <p className="form-error">{error}</p> : null}
+      <button type="submit"><Plus size={16} />Add School Admin</button>
+    </form>
+  );
+}
+
+function SchoolDetailPanel({ detail, onClose, onChanged }) {
+  const [schoolForm, setSchoolForm] = useState({
+    name: detail.school.name || "",
+    contact_email: detail.school.contact_email || "",
+    clubs: detail.school.clubs?.join(", ") || ""
+  });
+  const [adminForm, setAdminForm] = useState({ full_name: "", email: "", password: "" });
+  const [passwords, setPasswords] = useState({});
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+
+  function updateSchoolForm(key, value) {
+    setSchoolForm((current) => ({ ...current, [key]: value }));
+  }
+
+  async function saveSchool(event) {
+    event.preventDefault();
+    setError("");
+    setMessage("");
+    try {
+      await api.patch(`/schools/${detail.school.id}`, {
+        name: schoolForm.name,
+        contact_email: schoolForm.contact_email || null,
+        logo_url: detail.school.logo_url || null,
+        clubs: schoolForm.clubs.split(",").map((club) => club.trim()).filter(Boolean)
+      });
+      setMessage("School details updated.");
+      onChanged(detail.school.id);
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function addAdmin(event) {
+    event.preventDefault();
+    setError("");
+    setMessage("");
+    try {
+      await api.post("/users/school-admins", { ...adminForm, school_id: detail.school.id });
+      setAdminForm({ full_name: "", email: "", password: "" });
+      setMessage("School Admin added. Password change is required on first login.");
+      onChanged(detail.school.id);
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function resetPassword(adminId) {
+    setError("");
+    setMessage("");
+    try {
+      await api.patch(`/schools/${detail.school.id}/admins/${adminId}/password`, { password: passwords[adminId] });
+      setPasswords((current) => ({ ...current, [adminId]: "" }));
+      setMessage("School Admin password updated. They must change it on first login.");
+      onChanged(detail.school.id);
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function deleteSchool() {
+    const confirmed = window.confirm(`Delete ${detail.school.name}? This permanently removes school-linked users, learners, submissions, reports, preferences, streams, and enrolments. Global academic term definitions remain.`);
+    if (!confirmed) return;
+    setError("");
+    try {
+      await api.delete(`/schools/${detail.school.id}`);
+      onClose();
+      onChanged(null);
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  return (
+    <section className="school-detail-panel">
+      <div className="detail-header">
+        <div>
+          <p className="eyebrow">School workspace</p>
+          <h2>{detail.school.name}</h2>
+          <p>{detail.counts.learners} learners · {detail.counts.school_admins} school admins · {detail.counts.enrolments} enrolments</p>
+        </div>
+        <button type="button" className="secondary-button" onClick={onClose}>Close</button>
+      </div>
+
+      {message ? <div className="success-note">{message}</div> : null}
+      {error ? <div className="alert">{error}</div> : null}
+
+      <form className="inline-form detail-form" onSubmit={saveSchool}>
+        <label>School name<input value={schoolForm.name} onChange={(e) => updateSchoolForm("name", e.target.value)} required /></label>
+        <label>Contact email<input type="email" value={schoolForm.contact_email} onChange={(e) => updateSchoolForm("contact_email", e.target.value)} /></label>
+        <label>Clubs<input value={schoolForm.clubs} onChange={(e) => updateSchoolForm("clubs", e.target.value)} /></label>
+        <button type="submit">Save school</button>
+      </form>
+
+      <div className="detail-grid">
+        <section className="panel compact-panel">
+          <h3>School Admins</h3>
+          <form className="stack-form" onSubmit={addAdmin}>
+            <label>Full name<input value={adminForm.full_name} onChange={(e) => setAdminForm({ ...adminForm, full_name: e.target.value })} required /></label>
+            <label>Email<input type="email" value={adminForm.email} onChange={(e) => setAdminForm({ ...adminForm, email: e.target.value })} required /></label>
+            <label>Temporary password<input type="password" value={adminForm.password} onChange={(e) => setAdminForm({ ...adminForm, password: e.target.value })} required /></label>
+            <button type="submit"><Plus size={16} />Add admin</button>
+          </form>
+
+          {detail.admins.length ? detail.admins.map((admin) => (
+            <div className="admin-row" key={admin.id}>
+              <div>
+                <strong>{admin.full_name}</strong>
+                <span>{admin.email}</span>
+              </div>
+              <label>New temporary password<input type="password" value={passwords[admin.id] || ""} onChange={(e) => setPasswords({ ...passwords, [admin.id]: e.target.value })} /></label>
+              <button type="button" onClick={() => resetPassword(admin.id)}>Set password</button>
+            </div>
+          )) : <EmptyState title="No School Admins yet" detail="Add a real admin account for this school." />}
+        </section>
+
+        <section className="panel compact-panel">
+          <h3>Learners In This School</h3>
+          <DataTable rows={detail.learners} emptyTitle="No learners in this school yet" columns={[
+            { key: "full_name", label: "Learner" },
+            { key: "username", label: "Username" },
+            { key: "grade", label: "Grade" },
+            { key: "stream", label: "Stream", render: (row) => row.stream || "-" }
+          ]} />
+        </section>
+      </div>
+
+      <div className="danger-zone">
+        <div>
+          <strong>Delete school</strong>
+          <span>Removes school-linked operational data and accounts. Academic year and term definitions are preserved.</span>
+        </div>
+        <button type="button" className="danger-button" onClick={deleteSchool}>Delete school</button>
+      </div>
+    </section>
+  );
+}
+
 export default function SystemAdminDashboard() {
   const [activeTab, setActiveTab] = useState("overview");
   const [user, setUser] = useState(null);
@@ -211,6 +380,8 @@ export default function SystemAdminDashboard() {
   });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [selectedSchool, setSelectedSchool] = useState(null);
+  const [schoolDetail, setSchoolDetail] = useState(null);
 
   const metricCards = useMemo(() => {
     const totals = data.summary?.totals || {};
@@ -226,32 +397,66 @@ export default function SystemAdminDashboard() {
     setLoading(true);
     setError("");
     try {
-      const [summary, schools, terms, users, courses, questions, leaderboards, audit, performance] = await Promise.all([
-        api.get("/analytics/system-admin/summary"),
-        api.get("/schools"),
-        api.get("/terms"),
-        api.get("/users"),
-        api.get("/courses"),
-        api.get("/quizzes/global-questions"),
-        api.get("/leaderboards"),
-        api.get("/analytics/audit-logs"),
-        api.get("/analytics/system-admin/school-performance")
-      ]);
+      const requests = {
+        summary: api.get("/analytics/system-admin/summary"),
+        schools: api.get("/schools"),
+        terms: api.get("/terms"),
+        users: api.get("/users"),
+        courses: api.get("/courses"),
+        questions: api.get("/quizzes/global-questions"),
+        leaderboards: api.get("/leaderboards"),
+        audit: api.get("/analytics/audit-logs"),
+        performance: api.get("/analytics/system-admin/school-performance")
+      };
+      const entries = await Promise.all(Object.entries(requests).map(async ([key, promise]) => {
+        try {
+          return [key, await promise, null];
+        } catch (err) {
+          return [key, null, err.message];
+        }
+      }));
+      const loaded = Object.fromEntries(entries.map(([key, value]) => [key, value]));
+      const failures = entries.filter(([, , failure]) => failure);
+      if (failures.length) {
+        setError(failures.map(([key, , failure]) => `${key}: ${failure}`).join(" | "));
+      }
       setData({
-        summary,
-        schools: schools.data,
-        terms: terms.data,
-        users: users.data,
-        courses: courses.data,
-        questions: questions.data,
-        leaderboards: leaderboards.data,
-        audit: audit.data,
-        performance
+        summary: loaded.summary,
+        schools: loaded.schools?.data || [],
+        terms: loaded.terms?.data || [],
+        users: loaded.users?.data || [],
+        courses: loaded.courses?.data || [],
+        questions: loaded.questions?.data || [],
+        leaderboards: loaded.leaderboards?.data || [],
+        audit: loaded.audit?.data || [],
+        performance: loaded.performance || []
       });
     } catch (err) {
       setError(err.message);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function openSchool(schoolId) {
+    setSelectedSchool(schoolId);
+    setError("");
+    try {
+      const detail = await api.get(`/schools/${schoolId}`);
+      setSchoolDetail(detail);
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function refreshSchoolDetail(schoolId) {
+    await loadDashboard();
+    if (schoolId) {
+      const detail = await api.get(`/schools/${schoolId}`);
+      setSchoolDetail(detail);
+    } else {
+      setSelectedSchool(null);
+      setSchoolDetail(null);
     }
   }
 
@@ -344,18 +549,23 @@ export default function SystemAdminDashboard() {
           <section className="panel">
             <h2>School Management</h2>
             <CreateSchoolForm onCreated={loadDashboard} />
-            <DataTable rows={data.schools} emptyTitle="No schools yet" columns={[
-              { key: "name", label: "School" },
-              { key: "contact_email", label: "Email" },
-              { key: "clubs", label: "Clubs", render: (row) => row.clubs?.join(", ") || "-" },
-              { key: "is_active", label: "Status", render: (row) => row.is_active ? "Active" : "Suspended" }
-            ]} />
+            <div className="school-list-grid">
+              {data.schools.length ? data.schools.map((school) => (
+                <button type="button" className={`school-list-card ${selectedSchool === school.id ? "active" : ""}`} key={school.id} onClick={() => openSchool(school.id)}>
+                  <strong>{school.name}</strong>
+                  <span>{school.contact_email || "No contact email"}</span>
+                  <small>{school.clubs?.join(", ") || "No clubs assigned"}</small>
+                </button>
+              )) : <EmptyState title="No schools yet" detail="Create a real school to manage its admins and learners." />}
+            </div>
+            {schoolDetail ? <SchoolDetailPanel detail={schoolDetail} onClose={() => { setSelectedSchool(null); setSchoolDetail(null); }} onChanged={refreshSchoolDetail} /> : null}
           </section>
         )}
 
         {!loading && activeTab === "users" && (
           <section className="panel">
             <h2>User Management</h2>
+            <CreateSchoolAdminForm schools={data.schools} onCreated={loadDashboard} />
             <DataTable rows={data.users} emptyTitle="No users yet" columns={[
               { key: "full_name", label: "Name" },
               { key: "role", label: "Role" },

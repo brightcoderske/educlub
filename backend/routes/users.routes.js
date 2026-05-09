@@ -7,6 +7,7 @@ const router = express.Router();
 router.use(authenticate, requireRoles("system_admin"));
 
 router.get("/", controller.listUsers);
+router.post("/school-admins", controller.createSchoolAdmin);
 router.patch("/:id", controller.updateUser);
 router.patch("/:id/deactivate", controller.deactivateUser);
 router.delete("/:id", controller.deleteUser);

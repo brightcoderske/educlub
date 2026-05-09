@@ -70,6 +70,15 @@ async function main() {
     }
   }
 
+  const schools = await request("/api/schools", { headers });
+  if (schools.body.data && schools.body.data.length > 0) {
+    const schoolId = schools.body.data[0].id;
+    const detail = await request(`/api/schools/${schoolId}`, { headers });
+    if (detail.statusCode !== 200 || !detail.body.school) {
+      throw new Error(`/api/schools/${schoolId} failed with status ${detail.statusCode}: ${JSON.stringify(detail.body)}`);
+    }
+  }
+
   console.log("Local System Admin login and all dashboard API checks passed.");
 }
 

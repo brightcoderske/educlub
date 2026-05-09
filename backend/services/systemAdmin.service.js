@@ -1,3 +1,4 @@
+const bcrypt = require("bcryptjs");
 const { one, list, query, pagination, transaction } = require("../config/database");
 
 const SYSTEM_ADMIN = "system_admin";
@@ -44,6 +45,42 @@ async function createSchool(payload) {
   );
 }
 
+async function getSchoolDetail(id) {
+  const school = await one(
+    `select id, name, contact_email, logo_url, clubs, is_active, suspended_at, deleted_at, created_at
+     from schools
+     where id = $1 and deleted_at is null`,
+    [id]
+  );
+
+  if (!school) {
+    const error = new Error("School not found");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const [admins, learners, counts] = await Promise.all([
+    listUsers({ school_id: id, role: "school_admin", pageSize: 100 }),
+    listUsers({ school_id: id, role: "student", pageSize: 100 }),
+    one(
+      `select
+        (select count(*)::int from users where school_id = $1 and role = 'school_admin' and deleted_at is null) as school_admins,
+        (select count(*)::int from users where school_id = $1 and role = 'student' and deleted_at is null) as learners,
+        (select count(*)::int from enrolments where school_id = $1) as enrolments,
+        (select count(*)::int from report_cards where school_id = $1) as report_cards,
+        (select count(*)::int from submissions where school_id = $1) as submissions`,
+      [id]
+    )
+  ]);
+
+  return {
+    school,
+    counts,
+    admins: admins.data,
+    learners: learners.data
+  };
+}
+
 async function updateSchool(id, payload) {
   return one(
     `update schools set name = $2, contact_email = $3, logo_url = $4, clubs = $5, updated_at = now()
@@ -66,6 +103,37 @@ async function softDeleteSchool(id) {
      where id = $1 returning *`,
     [id]
   );
+}
+
+async function deleteSchoolPermanently(id) {
+  const existing = await one("select id, name from schools where id = $1", [id]);
+  if (!existing) {
+    const error = new Error("School not found");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  return transaction(async (client) => {
+    await client.query("delete from audit_logs where school_id = $1", [id]);
+    await client.query("delete from leaderboard_entries where school_id = $1", [id]);
+    await client.query("delete from report_cards where school_id = $1", [id]);
+    await client.query("delete from submissions where school_id = $1", [id]);
+    await client.query("delete from typing_results where school_id = $1", [id]);
+    await client.query("delete from quiz_attempts where school_id = $1", [id]);
+    await client.query("delete from quiz_question_school_visibility where school_id = $1", [id]);
+    await client.query("delete from quiz_items where quiz_id in (select id from quizzes where school_id = $1)", [id]);
+    await client.query("delete from quizzes where school_id = $1", [id]);
+    await client.query("delete from quiz_questions where school_id = $1", [id]);
+    await client.query("delete from school_lesson_annotations where school_id = $1", [id]);
+    await client.query("delete from enrolments where school_id = $1", [id]);
+    await client.query("delete from grade_history where school_id = $1", [id]);
+    await client.query("delete from school_streams where school_id = $1", [id]);
+    await client.query("delete from school_preferences where school_id = $1", [id]);
+    await client.query("delete from school_active_terms where school_id = $1", [id]);
+    await client.query("delete from users where school_id = $1", [id]);
+    const deleted = await client.query("delete from schools where id = $1 returning id, name", [id]);
+    return deleted.rows[0];
+  });
 }
 
 async function listTerms(params = {}) {
@@ -126,7 +194,7 @@ async function listUsers(params = {}) {
   }
   values.push(limit, offset);
   return list(
-    `select u.id, u.school_id, u.role, u.full_name, u.email, u.username, u.grade, u.stream, u.is_active,
+    `select u.id, u.school_id, u.role, coalesce(u.full_name, u.name) as full_name, u.email, u.username, u.grade, u.stream, u.is_active,
             u.deleted_at, u.created_at, s.name as school_name
      from users u left join schools s on s.id = u.school_id
      where ${where.join(" and ")}
@@ -137,10 +205,59 @@ async function listUsers(params = {}) {
   );
 }
 
+async function createSchoolAdmin(payload) {
+  const school = await one("select id from schools where id = $1 and deleted_at is null", [payload.school_id]);
+  if (!school) {
+    const error = new Error("A real school must be selected before creating a School Admin");
+    error.statusCode = 400;
+    throw error;
+  }
+  if (!payload.password) {
+    const error = new Error("A temporary password is required");
+    error.statusCode = 400;
+    throw error;
+  }
+  const passwordHash = await bcrypt.hash(payload.password, 12);
+  return one(
+    `insert into users (school_id, role, name, full_name, email, password_hash, must_change_password, force_password_change, two_factor_enabled, status, is_active)
+     values ($1, 'school_admin', $2, $2, lower($3), $4, true, true, false, 'active', true)
+     returning id, school_id, role, full_name, email, is_active, created_at`,
+    [payload.school_id, payload.full_name, payload.email, passwordHash]
+  );
+}
+
+async function resetSchoolAdminPassword(schoolId, adminId, password) {
+  if (!password) {
+    const error = new Error("New temporary password is required");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const passwordHash = await bcrypt.hash(password, 12);
+  const admin = await one(
+    `update users
+     set password_hash = $3,
+         force_password_change = true,
+         is_active = true,
+         updated_at = now()
+     where id = $1 and school_id = $2 and role = 'school_admin' and deleted_at is null
+     returning id, full_name, email, school_id, force_password_change, is_active`,
+    [adminId, schoolId, passwordHash]
+  );
+
+  if (!admin) {
+    const error = new Error("School Admin not found for this school");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  return admin;
+}
+
 async function updateUser(id, payload) {
   return one(
     `update users
-     set full_name = $2, email = $3, school_id = $4, grade = $5, stream = $6, is_active = $7, updated_at = now()
+     set name = $2, full_name = $2, email = $3, school_id = $4, grade = $5, stream = $6, is_active = $7, status = case when $7 then 'active' else 'inactive' end, updated_at = now()
      where id = $1
      returning id, school_id, role, full_name, email, username, grade, stream, is_active`,
     [id, payload.full_name, payload.email || null, payload.school_id || null, payload.grade || null, payload.stream || null, payload.is_active]
@@ -165,7 +282,7 @@ async function listCourses(params = {}) {
   }
   values.push(limit, offset);
   return list(
-    `select id, name, objectives, club, is_published, published_at, created_at
+    `select id, coalesce(name, title) as name, coalesce(objectives, description) as objectives, club, is_published, published_at, created_at
      from courses where ${where.join(" and ")}
      order by created_at desc limit $${values.length - 1} offset $${values.length}`,
     values,
@@ -175,24 +292,35 @@ async function listCourses(params = {}) {
 }
 
 async function createCourse(payload) {
+  if (!payload.name) {
+    const error = new Error("Course name is required");
+    error.statusCode = 400;
+    throw error;
+  }
   return one(
-    "insert into courses (name, objectives, club) values ($1, $2, $3) returning *",
-    [payload.name, payload.objectives || null, payload.club || null]
+    `insert into courses (title, name, description, objectives, club, status, is_published)
+     values ($1, $1, $2, $2, $3, 'draft', false)
+     returning id, coalesce(name, title) as name, coalesce(objectives, description) as objectives, club, is_published, published_at, created_at`,
+    [payload.name, payload.objectives || null, payload.club || "Computer Club"]
   );
 }
 
 async function updateCourse(id, payload) {
   return one(
-    "update courses set name = $2, objectives = $3, club = $4, updated_at = now() where id = $1 returning *",
-    [id, payload.name, payload.objectives || null, payload.club || null]
+    `update courses
+     set title = $2, name = $2, description = $3, objectives = $3, club = $4, updated_at = now()
+     where id = $1
+     returning id, coalesce(name, title) as name, coalesce(objectives, description) as objectives, club, is_published, published_at, created_at`,
+    [id, payload.name, payload.objectives || null, payload.club || "Computer Club"]
   );
 }
 
 async function publishCourse(id, isPublished) {
   return one(
-    `update courses set is_published = $2, published_at = $3, updated_at = now()
-     where id = $1 returning *`,
-    [id, Boolean(isPublished), isPublished ? new Date().toISOString() : null]
+    `update courses set is_published = $2, status = $4, published_at = $3, updated_at = now()
+     where id = $1
+     returning id, coalesce(name, title) as name, coalesce(objectives, description) as objectives, club, is_published, published_at, created_at`,
+    [id, Boolean(isPublished), isPublished ? new Date().toISOString() : null, isPublished ? "published" : "draft"]
   );
 }
 
@@ -299,14 +427,18 @@ module.exports = {
   assertSystemAdmin,
   listSchools,
   createSchool,
+  getSchoolDetail,
   updateSchool,
   suspendSchool,
   softDeleteSchool,
+  deleteSchoolPermanently,
   listTerms,
   createAcademicYear,
   createTerm,
   setGlobalActiveTerm,
   listUsers,
+  createSchoolAdmin,
+  resetSchoolAdminPassword,
   updateUser,
   deactivateUser,
   softDeleteUser,

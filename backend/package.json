@@ -9,6 +9,7 @@
     "dev": "node server.js",
     "check": "node --check app.js && node --check server.js",
     "admin:create": "node scripts/createSystemAdmin.js",
+    "school-admin:create": "node scripts/createSchoolAdmin.js",
     "db:setup": "node scripts/applySchema.js",
     "db:verify-security": "node scripts/verifySecurity.js",
     "verify:local-login": "node scripts/verifyLocalLogin.js"
@@ -21,6 +22,8 @@
     "helmet": "^8.0.0",
     "jsonwebtoken": "^9.0.2",
     "morgan": "^1.10.0",
+    "exceljs": "^4.4.0",
+    "multer": "^2.0.2",
     "pg": "^8.13.1"
   }
 }

@@ -27,6 +27,7 @@ async function main() {
     await query(
       `update users
        set full_name = $2,
+           name = $2,
            password_hash = $3,
            force_password_change = true,
            is_active = true,
@@ -40,8 +41,8 @@ async function main() {
   }
 
   await query(
-    `insert into users (role, full_name, email, password_hash, force_password_change, two_factor_enabled, is_active)
-     values ('system_admin', $1, $2, $3, true, false, true)`,
+    `insert into users (role, name, full_name, email, password_hash, must_change_password, force_password_change, two_factor_enabled, status, is_active)
+     values ('system_admin', $1, $1, $2, $3, true, true, false, 'active', true)`,
     [fullName, normalizedEmail, passwordHash]
   );
   console.log("System Admin account created. Password change is required on first login.");

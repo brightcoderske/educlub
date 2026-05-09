@@ -14,9 +14,10 @@ function wrap(handler) {
 
 const listSchools = wrap(async (req, res) => res.json(await service.listSchools(req.query)));
 const createSchool = wrap(async (req, res) => res.status(201).json(await service.createSchool(req.body)));
+const getSchoolDetail = wrap(async (req, res) => res.json(await service.getSchoolDetail(req.params.id)));
 const updateSchool = wrap(async (req, res) => res.json(await service.updateSchool(req.params.id, req.body)));
 const suspendSchool = wrap(async (req, res) => res.json(await service.suspendSchool(req.params.id, req.body.suspended !== false)));
-const deleteSchool = wrap(async (req, res) => res.json(await service.softDeleteSchool(req.params.id)));
+const deleteSchool = wrap(async (req, res) => res.json(await service.deleteSchoolPermanently(req.params.id)));
 
 const listTerms = wrap(async (req, res) => res.json(await service.listTerms(req.query)));
 const createAcademicYear = wrap(async (req, res) => res.status(201).json(await service.createAcademicYear(req.body)));
@@ -24,6 +25,8 @@ const createTerm = wrap(async (req, res) => res.status(201).json(await service.c
 const setGlobalActiveTerm = wrap(async (req, res) => res.json(await service.setGlobalActiveTerm(req.params.id)));
 
 const listUsers = wrap(async (req, res) => res.json(await service.listUsers(req.query)));
+const createSchoolAdmin = wrap(async (req, res) => res.status(201).json(await service.createSchoolAdmin(req.body)));
+const resetSchoolAdminPassword = wrap(async (req, res) => res.json(await service.resetSchoolAdminPassword(req.params.schoolId, req.params.adminId, req.body.password)));
 const updateUser = wrap(async (req, res) => res.json(await service.updateUser(req.params.id, req.body)));
 const deactivateUser = wrap(async (req, res) => res.json(await service.deactivateUser(req.params.id)));
 const deleteUser = wrap(async (req, res) => res.json(await service.softDeleteUser(req.params.id)));
@@ -44,6 +47,7 @@ const auditLogs = wrap(async (req, res) => res.json(await service.auditLogs(req.
 module.exports = {
   listSchools,
   createSchool,
+  getSchoolDetail,
   updateSchool,
   suspendSchool,
   deleteSchool,
@@ -52,6 +56,8 @@ module.exports = {
   createTerm,
   setGlobalActiveTerm,
   listUsers,
+  createSchoolAdmin,
+  resetSchoolAdminPassword,
   updateUser,
   deactivateUser,
   deleteUser,

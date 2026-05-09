@@ -26,6 +26,7 @@ const tables = [
   "report_cards",
   "leaderboard_entries",
   "school_preferences",
+  "school_streams",
   "audit_logs"
 ];
 
