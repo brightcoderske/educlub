@@ -1,4 +1,5 @@
 const { one, query } = require("../config/database");
+const { recordAudit } = require("../utils/audit");
 
 function assertStudent(user) {
   if (!user || user.role !== "student") {
@@ -27,11 +28,40 @@ function expectation(score) {
   return "Exceeding expectation";
 }
 
+function rankRows(rows, scoreKey = "score") {
+  let previousScore = null;
+  let previousRank = 0;
+  return rows.map((row, index) => {
+    const score = Number(row[scoreKey] || 0);
+    const rank = previousScore === score ? previousRank : index + 1;
+    previousScore = score;
+    previousRank = rank;
+    return { ...row, score, rank };
+  });
+}
+
+function typingMetrics(passage, typedText, elapsedSeconds) {
+  const expected = String(passage || "");
+  const typed = String(typedText || "");
+  const seconds = Math.max(Number(elapsedSeconds || 0), 1);
+  let correctCharacters = 0;
+  for (let index = 0; index < typed.length; index += 1) {
+    if (typed[index] === expected[index]) correctCharacters += 1;
+  }
+  const accuracy = typed.length ? (correctCharacters / typed.length) * 100 : 0;
+  const wpm = (correctCharacters / 5) / (seconds / 60);
+  return {
+    wpm: Math.round(wpm * 100) / 100,
+    accuracy: Math.round(accuracy * 100) / 100,
+    timeTakenSeconds: Math.round(seconds)
+  };
+}
+
 async function learnerContext(user) {
   assertStudent(user);
   const learner = await one(
     `select u.id, u.school_id, coalesce(u.full_name, u.name) as full_name, u.username, u.grade, u.stream,
-            u.last_login_at, u.previous_login_at, s.name as school_name, lp.id as learner_profile_id
+            u.last_login_at, u.previous_login_at, s.name as school_name, s.logo_url as school_logo_url, lp.id as learner_profile_id
      from users u
      join schools s on s.id = u.school_id
      left join learner_profiles lp on lp.user_id = u.id and lp.school_id = u.school_id
@@ -46,12 +76,12 @@ async function learnerContext(user) {
   }
 
   const activeTerm = await one(
-    `select t.id, t.name, t.starts_on, t.ends_on, ay.year
-     from school_active_terms sat
-     join terms t on t.id = sat.term_id
+    `select t.id, coalesce(t.label, t.name::text) as name, t.starts_on, t.ends_on, ay.year
+     from terms t
      join academic_years ay on ay.id = t.academic_year_id
-     where sat.school_id = $1`,
-    [user.school_id]
+     where t.is_global_active = true
+     order by t.starts_on desc
+     limit 1`
   );
 
   return { learner, activeTerm };
@@ -62,11 +92,11 @@ async function dashboard(user, params = {}) {
   const termId = params.term_id || activeTerm?.id || null;
   const profileId = learner.learner_profile_id || null;
 
-  const [courses, progress, typing, quizzes, reports, leaderboards, submissions, assignedQuizzes, quizTrend] = await Promise.all([
+  const [courses, progress, typing, quizzes, reports, leaderboards, submissions, assignedQuizzes, assignedTypingTests, quizTrend, typingTrend, quizLeaders] = await Promise.all([
     query(
       `select e.id as enrolment_id, e.status, e.created_at, e.term_id,
               coalesce(c.name, c.title) as course_name, c.id as course_id, c.club, coalesce(c.objectives, c.description) as objectives,
-              t.name as term_name, ay.year
+              coalesce(t.label, t.name::text) as term_name, ay.year
        from enrolments e
        join courses c on c.id = e.course_id
        join terms t on t.id = e.term_id
@@ -87,8 +117,16 @@ async function dashboard(user, params = {}) {
       [learner.id]
     ),
     query(
-      `select tr.id, tr.term_id, tr.wpm, tr.accuracy, tr.time_taken_seconds, tr.created_at, t.name as term_name, ay.year
-       from typing_results tr
+      `select tr.id, tr.term_id, tr.wpm, tr.accuracy, tr.time_taken_seconds, tr.created_at, tt.title as test_title,
+              coalesce(t.label, t.name::text) as term_name, ay.year
+       from (
+         select id, learner_id, school_id, term_id, wpm, accuracy, time_taken_seconds, created_at, null::uuid as typing_test_id
+         from typing_results
+         union all
+         select id, learner_id, school_id, term_id, wpm, accuracy, time_taken_seconds, created_at, typing_test_id
+         from typing_attempts
+       ) tr
+       left join typing_tests tt on tt.id = tr.typing_test_id
        join terms t on t.id = tr.term_id
        join academic_years ay on ay.id = t.academic_year_id
        where tr.school_id = $1 and tr.learner_id = $2 and ($3::uuid is null or tr.term_id = $3)
@@ -97,7 +135,7 @@ async function dashboard(user, params = {}) {
     ),
     query(
       `select qa.id, qa.term_id, qa.score, qa.time_taken_seconds, qa.created_at,
-              q.title as quiz_title, t.name as term_name, ay.year
+              q.title as quiz_title, coalesce(t.label, t.name::text) as term_name, ay.year
        from quiz_attempts qa
        left join quizzes q on q.id = qa.quiz_id
        join terms t on t.id = qa.term_id
@@ -108,7 +146,7 @@ async function dashboard(user, params = {}) {
     ),
     query(
       `select rc.id, rc.term_id, rc.pdf_url, rc.snapshot, rc.teacher_remarks, rc.published_at, rc.created_at,
-              t.name as term_name, ay.year
+              coalesce(t.label, t.name::text) as term_name, ay.year
        from report_cards rc
        join terms t on t.id = rc.term_id
        join academic_years ay on ay.id = t.academic_year_id
@@ -133,6 +171,7 @@ async function dashboard(user, params = {}) {
     ),
     query(
       `select qa.id as assignment_id, qa.quiz_id, qa.grade, qa.max_attempts, qa.assigned_at,
+              qa.available_from, qa.available_until,
               q.title, q.description, q.grade_levels, q.total_points, q.time_limit_seconds,
               count(at.id)::int as attempts_used,
               max(at.score)::numeric as best_score
@@ -141,13 +180,34 @@ async function dashboard(user, params = {}) {
        left join quiz_attempts at on at.assignment_id = qa.id and at.learner_id = $2
        where qa.school_id = $1 and qa.grade = $3 and qa.is_active = true
          and ($4::uuid is null or qa.term_id = $4)
+         and (qa.available_from is null or qa.available_from <= now())
+         and (qa.available_until is null or qa.available_until >= now())
          and q.deleted_at is null and q.is_published = true
        group by qa.id, q.id
        order by qa.assigned_at desc`,
       [learner.school_id, learner.id, Number(learner.grade), termId]
     ),
     query(
+      `select ta.id as assignment_id, ta.typing_test_id, ta.grade, ta.assigned_at, ta.available_from, ta.available_until,
+              tt.title, tt.duration_seconds, tt.grade_levels,
+              count(at.id)::int as attempts_used,
+              max(at.wpm)::numeric as best_wpm,
+              max(at.accuracy)::numeric as best_accuracy
+       from typing_assignments ta
+       join typing_tests tt on tt.id = ta.typing_test_id
+       left join typing_attempts at on at.assignment_id = ta.id and at.learner_id = $2
+       where ta.school_id = $1 and ta.grade = $3 and ta.is_active = true
+         and ($4::uuid is null or ta.term_id = $4)
+         and (ta.available_from is null or ta.available_from <= now())
+         and (ta.available_until is null or ta.available_until >= now())
+         and tt.deleted_at is null and tt.is_published = true
+       group by ta.id, tt.id
+       order by ta.assigned_at desc`,
+      [learner.school_id, learner.id, Number(learner.grade), termId]
+    ),
+    query(
       `select date_trunc('week', qa.created_at)::date as week_start,
+              max(qa.score)::numeric as best_score,
               avg(qa.score)::numeric as average_score,
               count(*)::int as attempts
        from quiz_attempts qa
@@ -155,6 +215,31 @@ async function dashboard(user, params = {}) {
        group by date_trunc('week', qa.created_at)::date
        order by week_start`,
       [learner.school_id, learner.id, termId]
+    ),
+    query(
+      `select date_trunc('week', ta.created_at)::date as week_start,
+              max(ta.wpm)::numeric as best_wpm,
+              avg(ta.wpm)::numeric as average_wpm,
+              avg(ta.accuracy)::numeric as average_accuracy,
+              count(*)::int as attempts
+       from typing_attempts ta
+       where ta.school_id = $1 and ta.learner_id = $2 and ($3::uuid is null or ta.term_id = $3)
+       group by date_trunc('week', ta.created_at)::date
+       order by week_start`,
+      [learner.school_id, learner.id, termId]
+    ),
+    query(
+      `select qa.learner_id, coalesce(u.full_name, u.name) as learner_name, u.grade, u.stream,
+              max(qa.score)::numeric as best_score,
+              avg(qa.score)::numeric as average_score,
+              count(*)::int as attempts,
+              max(qa.created_at) as created_at
+       from quiz_attempts qa
+       join users u on u.id = qa.learner_id
+       where qa.school_id = $1 and ($2::uuid is null or qa.term_id = $2)
+       group by qa.learner_id, coalesce(u.full_name, u.name), u.grade, u.stream
+       order by max(qa.score) desc, avg(qa.score) desc, max(qa.created_at) asc`,
+      [learner.school_id, termId]
     )
   ]);
 
@@ -169,6 +254,46 @@ async function dashboard(user, params = {}) {
     };
   });
 
+  const dynamicQuizLeaderboard = rankRows(quizLeaders.rows.map((row) => ({
+    id: `quiz-${termId || "all"}-${row.learner_id}`,
+    term_id: termId,
+    leaderboard_type: "quiz",
+    score: row.best_score,
+    average_score: row.average_score,
+    attempts: row.attempts,
+    learner_id: row.learner_id,
+    learner_name: row.learner_name,
+    grade: row.grade,
+    stream: row.stream,
+    created_at: row.created_at
+  }))).filter((row) => row.learner_id === learner.id);
+
+  const leaderboardRows = [
+    ...leaderboards.rows,
+    ...dynamicQuizLeaderboard.filter((row) => !leaderboards.rows.some((entry) => entry.leaderboard_type === "quiz"))
+  ];
+
+  const reportCard = {
+    learner,
+    school: {
+      id: learner.school_id,
+      name: learner.school_name,
+      logo_url: learner.school_logo_url
+    },
+    term: activeTerm,
+    courses: courses.rows,
+    quiz_results: quizzes.rows,
+    typing_results: typing.rows,
+    leaderboards: leaderboardRows,
+    summary: {
+      courses: courses.rows.length,
+      quiz_attempts: quizzes.rows.length,
+      quiz_average: average(quizzes.rows, "score"),
+      typing_average_wpm: average(typing.rows, "wpm"),
+      typing_average_accuracy: average(typing.rows, "accuracy")
+    }
+  };
+
   return {
     learner,
     active_term: activeTerm,
@@ -176,7 +301,7 @@ async function dashboard(user, params = {}) {
     summary: {
       enrolled_courses: courses.rows.length,
       reports: reports.rows.length,
-      badges: leaderboards.rows.length,
+      badges: leaderboardRows.length,
       average_course_score: average(courseScores, "average_score"),
       average_quiz_score: average(quizzes.rows, "score"),
       average_typing_wpm: average(typing.rows, "wpm"),
@@ -192,9 +317,12 @@ async function dashboard(user, params = {}) {
       can_attempt: Number(row.attempts_used) < Number(row.max_attempts),
       expectation: expectation(row.best_score)
     })),
+    assigned_typing_tests: assignedTypingTests.rows,
     weekly_quiz_trend: quizTrend.rows,
+    weekly_typing_trend: typingTrend.rows,
     reports: reports.rows,
-    badges: leaderboards.rows,
+    report_card: reportCard,
+    badges: leaderboardRows,
     submissions: submissions.rows
   };
 }
@@ -209,6 +337,8 @@ async function quizForTaking(user, quizId) {
      join quizzes q on q.id = qa.quiz_id
      where qa.school_id = $1 and qa.quiz_id = $2 and qa.grade = $3 and qa.is_active = true
        and ($4::uuid is null or qa.term_id = $4)
+       and (qa.available_from is null or qa.available_from <= now())
+       and (qa.available_until is null or qa.available_until >= now())
        and q.deleted_at is null and q.is_published = true`,
     [learner.school_id, quizId, Number(learner.grade), termId]
   );
@@ -250,6 +380,8 @@ async function submitQuizAttempt(user, quizId, payload = {}) {
      join quizzes q on q.id = qa.quiz_id
      where qa.school_id = $1 and qa.quiz_id = $2 and qa.grade = $3 and qa.is_active = true
        and ($4::uuid is null or qa.term_id = $4)
+       and (qa.available_from is null or qa.available_from <= now())
+       and (qa.available_until is null or qa.available_until >= now())
        and q.deleted_at is null and q.is_published = true`,
     [learner.school_id, quizId, Number(learner.grade), termId]
   );
@@ -303,6 +435,15 @@ async function submitQuizAttempt(user, quizId, payload = {}) {
       answers
     ]
   );
+  await recordAudit({
+    actor: user,
+    action: "quiz.attempt_submit",
+    targetType: "quiz",
+    targetId: quizId,
+    schoolId: learner.school_id,
+    termId: assignment.term_id || termId,
+    metadata: { learner_id: learner.id, score, attempt_number: saved.attempt_number }
+  });
   return {
     ...saved,
     correct,
@@ -311,9 +452,96 @@ async function submitQuizAttempt(user, quizId, payload = {}) {
   };
 }
 
+async function typingTestForTaking(user, testId) {
+  const { learner, activeTerm } = await learnerContext(user);
+  const termId = activeTerm?.id || null;
+  const assignment = await one(
+    `select ta.id, ta.term_id, ta.available_from, ta.available_until,
+            tt.id as typing_test_id, tt.title, tt.passage, tt.duration_seconds
+     from typing_assignments ta
+     join typing_tests tt on tt.id = ta.typing_test_id
+     where ta.school_id = $1 and ta.typing_test_id = $2 and ta.grade = $3 and ta.is_active = true
+       and ($4::uuid is null or ta.term_id = $4)
+       and (ta.available_from is null or ta.available_from <= now())
+       and (ta.available_until is null or ta.available_until >= now())
+       and tt.deleted_at is null and tt.is_published = true`,
+    [learner.school_id, testId, Number(learner.grade), termId]
+  );
+  if (!assignment) {
+    const error = new Error("Typing test is not currently assigned to your grade");
+    error.statusCode = 404;
+    throw error;
+  }
+  const best = await one(
+    `select max(wpm)::numeric as best_wpm, max(accuracy)::numeric as best_accuracy, count(*)::int as attempts
+     from typing_attempts
+     where assignment_id = $1 and learner_id = $2`,
+    [assignment.id, learner.id]
+  );
+  return {
+    ...assignment,
+    attempts_used: best?.attempts || 0,
+    best_wpm: best?.best_wpm || null,
+    best_accuracy: best?.best_accuracy || null
+  };
+}
+
+async function submitTypingAttempt(user, testId, payload = {}) {
+  const { learner, activeTerm } = await learnerContext(user);
+  const termId = activeTerm?.id || null;
+  const assignment = await one(
+    `select ta.id, ta.term_id, tt.id as typing_test_id, tt.title, tt.passage
+     from typing_assignments ta
+     join typing_tests tt on tt.id = ta.typing_test_id
+     where ta.school_id = $1 and ta.typing_test_id = $2 and ta.grade = $3 and ta.is_active = true
+       and ($4::uuid is null or ta.term_id = $4)
+       and (ta.available_from is null or ta.available_from <= now())
+       and (ta.available_until is null or ta.available_until >= now())
+       and tt.deleted_at is null and tt.is_published = true`,
+    [learner.school_id, testId, Number(learner.grade), termId]
+  );
+  if (!assignment) {
+    const error = new Error("Typing test is not currently assigned to your grade");
+    error.statusCode = 404;
+    throw error;
+  }
+  const typedText = String(payload.typed_text || "");
+  const metrics = typingMetrics(assignment.passage, typedText, payload.time_taken_seconds);
+  const saved = await one(
+    `insert into typing_attempts (
+       typing_test_id, assignment_id, learner_id, school_id, term_id, wpm, accuracy, time_taken_seconds, typed_text
+     )
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+     returning id, typing_test_id, wpm, accuracy, time_taken_seconds, created_at`,
+    [
+      assignment.typing_test_id,
+      assignment.id,
+      learner.id,
+      learner.school_id,
+      assignment.term_id || termId,
+      metrics.wpm,
+      metrics.accuracy,
+      metrics.timeTakenSeconds,
+      typedText
+    ]
+  );
+  await recordAudit({
+    actor: user,
+    action: "typing.attempt_submit",
+    targetType: "typing_test",
+    targetId: assignment.typing_test_id,
+    schoolId: learner.school_id,
+    termId: assignment.term_id || termId,
+    metadata: { learner_id: learner.id, wpm: saved.wpm, accuracy: saved.accuracy }
+  });
+  return saved;
+}
+
 module.exports = {
   assertStudent,
   dashboard,
   quizForTaking,
-  submitQuizAttempt
+  submitQuizAttempt,
+  typingTestForTaking,
+  submitTypingAttempt
 };

@@ -25,27 +25,35 @@ alter table academic_years add column if not exists updated_at timestamptz not n
 create table if not exists terms (
   id uuid primary key default gen_random_uuid(),
   academic_year_id uuid not null references academic_years(id) on delete restrict,
-  name term_name not null,
+  label text not null,
+  name term_name,
   starts_on date not null,
   ends_on date not null,
+  status text not null default 'draft',
   is_global_active boolean not null default false,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  unique (academic_year_id, name),
+  unique (academic_year_id, label),
   check (starts_on <= ends_on)
 );
 
 alter table terms add column if not exists academic_year_id uuid references academic_years(id) on delete restrict;
+alter table terms add column if not exists label text;
 alter table terms add column if not exists name term_name;
 alter table terms add column if not exists starts_on date;
 alter table terms add column if not exists ends_on date;
+alter table terms add column if not exists status text not null default 'draft';
 alter table terms add column if not exists is_global_active boolean not null default false;
 alter table terms add column if not exists created_at timestamptz not null default now();
 alter table terms add column if not exists updated_at timestamptz not null default now();
+update terms set label = coalesce(label, name::text) where label is null;
+alter table terms alter column label set not null;
+create unique index if not exists terms_academic_year_label_unique on terms (academic_year_id, label);
 
 create table if not exists schools (
   id uuid primary key default gen_random_uuid(),
   name text not null,
+  status text not null default 'active',
   contact_email text,
   logo_url text,
   clubs text[] not null default '{}',
@@ -57,6 +65,7 @@ create table if not exists schools (
 );
 
 alter table schools add column if not exists contact_email text;
+alter table schools add column if not exists status text not null default 'active';
 alter table schools add column if not exists logo_url text;
 alter table schools add column if not exists clubs text[] not null default '{}';
 alter table schools add column if not exists is_active boolean not null default true;
@@ -316,6 +325,8 @@ create table if not exists quiz_assignments (
 alter table quiz_attempts add column if not exists assignment_id uuid;
 alter table quiz_attempts add column if not exists attempt_number integer not null default 1;
 alter table quiz_attempts add column if not exists answers jsonb not null default '{}'::jsonb;
+alter table quiz_assignments add column if not exists available_from timestamptz;
+alter table quiz_assignments add column if not exists available_until timestamptz;
 
 create table if not exists typing_results (
   id uuid primary key default gen_random_uuid(),
@@ -329,6 +340,82 @@ create table if not exists typing_results (
   created_at timestamptz not null default now(),
   unique (learner_id, term_id)
 );
+
+create table if not exists typing_tests (
+  id uuid primary key default gen_random_uuid(),
+  school_id uuid references schools(id) on delete cascade,
+  title text not null,
+  passage text not null,
+  duration_seconds integer not null default 300 check (duration_seconds between 30 and 1800),
+  grade_levels integer[] not null default '{}',
+  is_global boolean not null default false,
+  is_published boolean not null default true,
+  created_by uuid references users(id) on delete set null,
+  deleted_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table typing_tests add column if not exists school_id uuid references schools(id) on delete cascade;
+alter table typing_tests add column if not exists title text;
+alter table typing_tests add column if not exists passage text;
+alter table typing_tests add column if not exists duration_seconds integer not null default 300;
+alter table typing_tests add column if not exists grade_levels integer[] not null default '{}';
+alter table typing_tests add column if not exists is_global boolean not null default false;
+alter table typing_tests add column if not exists is_published boolean not null default true;
+alter table typing_tests add column if not exists created_by uuid references users(id) on delete set null;
+alter table typing_tests add column if not exists deleted_at timestamptz;
+alter table typing_tests add column if not exists created_at timestamptz not null default now();
+alter table typing_tests add column if not exists updated_at timestamptz not null default now();
+
+create table if not exists typing_assignments (
+  id uuid primary key default gen_random_uuid(),
+  typing_test_id uuid not null references typing_tests(id) on delete cascade,
+  school_id uuid not null references schools(id) on delete cascade,
+  term_id uuid references terms(id) on delete restrict,
+  grade integer not null check (grade between 1 and 9),
+  assigned_by uuid references users(id) on delete set null,
+  available_from timestamptz,
+  available_until timestamptz,
+  is_active boolean not null default true,
+  assigned_at timestamptz not null default now(),
+  unique (typing_test_id, school_id, term_id, grade)
+);
+
+alter table typing_assignments add column if not exists typing_test_id uuid references typing_tests(id) on delete cascade;
+alter table typing_assignments add column if not exists school_id uuid references schools(id) on delete cascade;
+alter table typing_assignments add column if not exists term_id uuid references terms(id) on delete restrict;
+alter table typing_assignments add column if not exists grade integer;
+alter table typing_assignments add column if not exists assigned_by uuid references users(id) on delete set null;
+alter table typing_assignments add column if not exists available_from timestamptz;
+alter table typing_assignments add column if not exists available_until timestamptz;
+alter table typing_assignments add column if not exists is_active boolean not null default true;
+alter table typing_assignments add column if not exists assigned_at timestamptz not null default now();
+
+create table if not exists typing_attempts (
+  id uuid primary key default gen_random_uuid(),
+  typing_test_id uuid not null references typing_tests(id) on delete cascade,
+  assignment_id uuid references typing_assignments(id) on delete set null,
+  learner_id uuid not null references users(id) on delete cascade,
+  school_id uuid not null references schools(id) on delete cascade,
+  term_id uuid not null references terms(id) on delete restrict,
+  wpm numeric(6,2) not null,
+  accuracy numeric(5,2) not null,
+  time_taken_seconds integer not null,
+  typed_text text not null default '',
+  created_at timestamptz not null default now()
+);
+
+alter table typing_attempts add column if not exists typing_test_id uuid references typing_tests(id) on delete cascade;
+alter table typing_attempts add column if not exists assignment_id uuid references typing_assignments(id) on delete set null;
+alter table typing_attempts add column if not exists learner_id uuid references users(id) on delete cascade;
+alter table typing_attempts add column if not exists school_id uuid references schools(id) on delete cascade;
+alter table typing_attempts add column if not exists term_id uuid references terms(id) on delete restrict;
+alter table typing_attempts add column if not exists wpm numeric(6,2);
+alter table typing_attempts add column if not exists accuracy numeric(5,2);
+alter table typing_attempts add column if not exists time_taken_seconds integer;
+alter table typing_attempts add column if not exists typed_text text not null default '';
+alter table typing_attempts add column if not exists created_at timestamptz not null default now();
 
 create table if not exists submissions (
   id uuid primary key default gen_random_uuid(),
@@ -494,6 +581,9 @@ alter table quiz_items enable row level security;
 alter table quiz_attempts enable row level security;
 alter table quiz_assignments enable row level security;
 alter table typing_results enable row level security;
+alter table typing_tests enable row level security;
+alter table typing_assignments enable row level security;
+alter table typing_attempts enable row level security;
 alter table submissions enable row level security;
 alter table report_cards enable row level security;
 alter table leaderboard_entries enable row level security;

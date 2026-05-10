@@ -1,10 +1,16 @@
 const express = require("express");
+const controller = require("../controllers/systemAdmin.controller");
 const { authenticate } = require("../middleware/auth.middleware");
 const { requireRoles } = require("../middleware/role.middleware");
 const { list, pagination } = require("../config/database");
 
 const router = express.Router();
 router.use(authenticate, requireRoles("system_admin"));
+
+router.get("/global", controller.listGlobalTypingTests);
+router.post("/global", controller.createGlobalTypingTest);
+router.patch("/global/:id", controller.updateGlobalTypingTest);
+router.delete("/global/:id", controller.deleteGlobalTypingTest);
 
 router.get("/results", async (req, res, next) => {
   try {
@@ -22,7 +28,7 @@ router.get("/results", async (req, res, next) => {
     values.push(limit, offset);
     res.json(await list(
       `select tr.id, tr.learner_id, tr.school_id, tr.term_id, tr.wpm, tr.accuracy, tr.time_taken_seconds, tr.created_at,
-              u.full_name, u.grade, u.stream, s.name as school_name, t.name as term_name
+              u.full_name, u.grade, u.stream, s.name as school_name, coalesce(t.label, t.name::text) as term_name
        from typing_results tr
        join users u on u.id = tr.learner_id
        join schools s on s.id = tr.school_id

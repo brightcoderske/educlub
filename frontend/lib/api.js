@@ -1,4 +1,5 @@
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:4000/api";
+const ASSET_BASE_URL = API_BASE_URL.replace(/\/api\/?$/, "");
 
 function getToken() {
   if (typeof window === "undefined") return null;
@@ -63,3 +64,9 @@ export const api = {
     return body;
   }
 };
+
+export function assetUrl(path) {
+  if (!path) return "";
+  if (/^(https?:|data:|blob:)/i.test(path)) return path;
+  return `${ASSET_BASE_URL}${path.startsWith("/") ? path : `/${path}`}`;
+}

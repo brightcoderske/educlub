@@ -26,7 +26,7 @@ router.get("/", async (req, res, next) => {
     values.push(limit, offset);
     res.json(await list(
       `select e.id, e.learner_id, e.school_id, e.course_id, e.term_id, e.status, e.created_at,
-              u.full_name, u.grade, u.stream, c.name as course_name, s.name as school_name, t.name as term_name
+              u.full_name, u.grade, u.stream, c.name as course_name, s.name as school_name, coalesce(t.label, t.name::text) as term_name
        from enrolments e
        join users u on u.id = e.learner_id
        join courses c on c.id = e.course_id

@@ -99,6 +99,23 @@
   font-size: 1.06rem;
 }
 
+.school-hero-title {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+.school-logo-md {
+  width: 86px;
+  height: 86px;
+  object-fit: contain;
+  border-radius: 20px;
+  background: rgba(255,255,255,0.88);
+  border: 1px solid rgba(255,255,255,0.96);
+  padding: 8px;
+  box-shadow: 0 12px 28px rgba(18, 50, 74, 0.12);
+}
+
 .last-login-card {
   width: min(260px, 100%);
   padding: 18px;
@@ -538,6 +555,11 @@
   }
 
   .school-hero {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .school-hero-title {
     align-items: flex-start;
     flex-direction: column;
   }

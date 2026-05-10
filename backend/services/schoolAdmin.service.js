@@ -1,5 +1,6 @@
 const bcrypt = require("bcryptjs");
 const { one, list, query, pagination, transaction } = require("../config/database");
+const { recordAudit } = require("../utils/audit");
 
 function assertSchoolAdmin(user) {
   if (!user || user.role !== "school_admin") {
@@ -64,27 +65,25 @@ async function profile(user) {
 }
 
 async function activeTerm(user) {
-  const schoolId = scopedSchoolId(user);
+  scopedSchoolId(user);
   return one(
-    `select t.id, t.name, t.starts_on, t.ends_on, ay.year
-     from school_active_terms sat
-     join terms t on t.id = sat.term_id
+    `select t.id, coalesce(t.label, t.name::text) as name, t.starts_on, t.ends_on, ay.year
+     from terms t
      join academic_years ay on ay.id = t.academic_year_id
-     where sat.school_id = $1`,
-    [schoolId]
+     where t.is_global_active = true
+     order by t.starts_on desc
+     limit 1`
   );
 }
 
 async function terms(user) {
-  const schoolId = scopedSchoolId(user);
+  scopedSchoolId(user);
   const result = await query(
-    `select t.id, t.name, t.starts_on, t.ends_on, ay.year,
-            case when sat.term_id is not null then true else false end as is_active
+    `select t.id, coalesce(t.label, t.name::text) as name, t.starts_on, t.ends_on, ay.year,
+            t.is_global_active as is_active
      from terms t
      join academic_years ay on ay.id = t.academic_year_id
-     left join school_active_terms sat on sat.term_id = t.id and sat.school_id = $1
-     order by t.starts_on desc`,
-    [schoolId]
+     order by t.starts_on desc`
   );
   return result.rows;
 }
@@ -283,6 +282,15 @@ async function addLearner(user, payload) {
       ]
     );
     await upsertLearnerProfile(client, schoolId, result.rows[0]);
+    await recordAudit({
+      client,
+      actor: user,
+      action: "learner.create",
+      targetType: "user",
+      targetId: result.rows[0].id,
+      schoolId,
+      metadata: { full_name: result.rows[0].full_name, username: result.rows[0].username }
+    });
     return result.rows[0];
   });
 }
@@ -331,6 +339,15 @@ async function bulkImportLearners(user, rows) {
         [schoolId, row.full_name, username, passwordHash, Number(row.grade), row.stream || null]
       );
       await upsertLearnerProfile(client, schoolId, result.rows[0]);
+      await recordAudit({
+        client,
+        actor: user,
+        action: "learner.bulk_create",
+        targetType: "user",
+        targetId: result.rows[0].id,
+        schoolId,
+        metadata: { full_name: result.rows[0].full_name, username: result.rows[0].username, row: row.row_number }
+      });
       created.push(result.rows[0]);
     }
   });
@@ -341,11 +358,15 @@ async function bulkImportLearners(user, rows) {
 async function updateLearner(user, learnerId, payload) {
   const schoolId = scopedSchoolId(user);
   return transaction(async (client) => {
+    const isActive = payload.is_active === undefined ? null : Boolean(payload.is_active);
     const result = await client.query(
       `update users
-       set name = $3, full_name = $3, grade = $4, stream = $5, parent_name = $6, parent_email = $7, parent_phone = $8, updated_at = now()
+       set name = $3, full_name = $3, grade = $4, stream = $5, parent_name = $6, parent_email = $7, parent_phone = $8,
+           is_active = coalesce($9::boolean, is_active),
+           status = case when $9::boolean is null then status when $9::boolean then 'active' else 'inactive' end,
+           updated_at = now()
        where id = $1 and school_id = $2 and role = 'student'
-       returning id, full_name, username, grade, stream, parent_name, parent_email, parent_phone`,
+       returning id, full_name, username, grade, stream, parent_name, parent_email, parent_phone, is_active, status`,
       [
         learnerId,
         schoolId,
@@ -354,13 +375,48 @@ async function updateLearner(user, learnerId, payload) {
         payload.stream || null,
         payload.parent_name || null,
         payload.parent_email || null,
-        payload.parent_phone || null
+        payload.parent_phone || null,
+        isActive
       ]
     );
     if (!result.rows[0]) return null;
     await upsertLearnerProfile(client, schoolId, result.rows[0]);
+    await recordAudit({
+      client,
+      actor: user,
+      action: "learner.update",
+      targetType: "user",
+      targetId: learnerId,
+      schoolId,
+      metadata: { full_name: result.rows[0].full_name, is_active: result.rows[0].is_active }
+    });
     return result.rows[0];
   });
+}
+
+async function setLearnerActive(user, learnerId, active) {
+  const schoolId = scopedSchoolId(user);
+  const learner = await one(
+    `update users
+     set is_active = $3, status = case when $3 then 'active' else 'inactive' end, updated_at = now()
+     where id = $1 and school_id = $2 and role = 'student' and deleted_at is null
+     returning id, coalesce(full_name, name) as full_name, username, grade, stream, parent_name, parent_email, parent_phone, is_active, status`,
+    [learnerId, schoolId, Boolean(active)]
+  );
+  if (!learner) {
+    const error = new Error("Learner not found");
+    error.statusCode = 404;
+    throw error;
+  }
+  await recordAudit({
+    actor: user,
+    action: active ? "learner.reactivate" : "learner.deactivate",
+    targetType: "user",
+    targetId: learner.id,
+    schoolId,
+    metadata: { full_name: learner.full_name, username: learner.username }
+  });
+  return learner;
 }
 
 async function promoteLearner(user, learnerId, payload = {}) {
@@ -407,6 +463,15 @@ async function promoteLearner(user, learnerId, payload = {}) {
     );
 
     await upsertLearnerProfile(client, schoolId, updated.rows[0]);
+    await recordAudit({
+      client,
+      actor: user,
+      action: mode === "next_grade" ? "learner.promote_grade" : "learner.promote_term",
+      targetType: "user",
+      targetId: learnerId,
+      schoolId,
+      metadata: { old_grade: learner.grade, new_grade: newGrade, old_stream: learner.stream, new_stream: newStream }
+    });
     return updated.rows[0];
   });
 }
@@ -446,15 +511,185 @@ async function typingResults(user, params = {}) {
   const termId = params.term_id || null;
   return list(
     `select tr.id, tr.learner_id, tr.term_id, tr.wpm, tr.accuracy, tr.time_taken_seconds, tr.created_at,
-            u.full_name as learner_name, u.grade, u.stream
-     from typing_results tr
+            tt.title as test_title, u.full_name as learner_name, u.grade, u.stream
+     from (
+       select id, learner_id, school_id, term_id, wpm, accuracy, time_taken_seconds, created_at, null::uuid as typing_test_id
+       from typing_results
+       union all
+       select id, learner_id, school_id, term_id, wpm, accuracy, time_taken_seconds, created_at, typing_test_id
+       from typing_attempts
+     ) tr
+     left join typing_tests tt on tt.id = tr.typing_test_id
      join users u on u.id = tr.learner_id
      where tr.school_id = $1 and ($2::uuid is null or tr.term_id = $2)
      order by tr.created_at desc limit $3 offset $4`,
     [schoolId, termId, limit, offset],
-    "select count(*) from typing_results where school_id = $1 and ($2::uuid is null or term_id = $2)",
+    `select (
+       (select count(*) from typing_results where school_id = $1 and ($2::uuid is null or term_id = $2)) +
+       (select count(*) from typing_attempts where school_id = $1 and ($2::uuid is null or term_id = $2))
+     ) as count`,
     [schoolId, termId]
   );
+}
+
+function normalizeTypingTestPayload(payload = {}) {
+  const title = String(payload.title || "").trim();
+  const passage = String(payload.passage || "").trim();
+  if (!title || !passage) {
+    const error = new Error("Typing test title and passage are required");
+    error.statusCode = 400;
+    throw error;
+  }
+  return {
+    title,
+    passage,
+    durationSeconds: Math.min(Math.max(Number(payload.duration_seconds || 300), 30), 1800),
+    gradeLevels: normalizeGrades(payload.grade_levels || [1]),
+    isPublished: payload.is_published !== false
+  };
+}
+
+async function globalTypingTests(user) {
+  scopedSchoolId(user);
+  const result = await query(
+    `select id, title, duration_seconds, grade_levels, is_global, is_published, created_at,
+            left(passage, 140) as passage_preview
+     from typing_tests
+     where is_global = true and is_published = true and deleted_at is null
+     order by created_at desc`
+  );
+  return result.rows;
+}
+
+async function schoolTypingTests(user) {
+  const schoolId = scopedSchoolId(user);
+  const result = await query(
+    `select id, title, duration_seconds, grade_levels, is_global, is_published, created_at,
+            left(passage, 140) as passage_preview
+     from typing_tests
+     where school_id = $1 and is_global = false and deleted_at is null
+     order by created_at desc`,
+    [schoolId]
+  );
+  return result.rows;
+}
+
+async function createSchoolTypingTest(user, payload) {
+  const schoolId = scopedSchoolId(user);
+  const normalized = normalizeTypingTestPayload(payload);
+  const test = await one(
+    `insert into typing_tests (school_id, title, passage, duration_seconds, grade_levels, is_global, is_published, created_by)
+     values ($1, $2, $3, $4, $5, false, $6, $7)
+     returning id, title, passage, duration_seconds, grade_levels, is_global, is_published, created_at`,
+    [schoolId, normalized.title, normalized.passage, normalized.durationSeconds, normalized.gradeLevels, normalized.isPublished, user.sub]
+  );
+  await recordAudit({
+    actor: user,
+    action: "typing.create_school",
+    targetType: "typing_test",
+    targetId: test.id,
+    schoolId,
+    metadata: { title: test.title, grade_levels: test.grade_levels }
+  });
+  return test;
+}
+
+async function assignTypingTest(user, testId, payload = {}) {
+  const schoolId = scopedSchoolId(user);
+  const grades = normalizeGrades(payload.grades || payload.grade_levels);
+  const term = payload.term_id ? { id: payload.term_id } : await activeTerm(user);
+  const termId = term?.id || null;
+  if (!termId) {
+    const error = new Error("An active term is required before assigning typing tests");
+    error.statusCode = 400;
+    throw error;
+  }
+  const test = await one(
+    `select id, title, grade_levels, is_global, school_id
+     from typing_tests
+     where id = $1 and deleted_at is null and is_published = true and (is_global = true or school_id = $2)`,
+    [testId, schoolId]
+  );
+  if (!test) {
+    const error = new Error("Typing test not found or not available to this school");
+    error.statusCode = 404;
+    throw error;
+  }
+  const allowed = (test.grade_levels || []).map((grade) => Number(grade));
+  const blocked = grades.filter((grade) => !allowed.includes(grade));
+  if (blocked.length) {
+    const error = new Error(`This typing test is only available to Grade ${allowed.join("-") || "none"}`);
+    error.statusCode = 400;
+    throw error;
+  }
+  return transaction(async (client) => {
+    const assigned = [];
+    for (const grade of grades) {
+      const result = await client.query(
+        `insert into typing_assignments (typing_test_id, school_id, term_id, grade, assigned_by, available_from, available_until, is_active)
+         values ($1, $2, $3, $4, $5, $6, $7, true)
+         on conflict (typing_test_id, school_id, term_id, grade) do update set
+           available_from = excluded.available_from,
+           available_until = excluded.available_until,
+           is_active = true,
+           assigned_by = excluded.assigned_by,
+           assigned_at = now()
+         returning *`,
+        [testId, schoolId, termId, grade, user.sub, payload.available_from || null, payload.available_until || null]
+      );
+      assigned.push(result.rows[0]);
+    }
+    await recordAudit({
+      client,
+      actor: user,
+      action: "typing.assign",
+      targetType: "typing_test",
+      targetId: testId,
+      schoolId,
+      termId,
+      metadata: { grades, count: assigned.length }
+    });
+    return { assigned, count: assigned.length };
+  });
+}
+
+async function typingAssignments(user, params = {}) {
+  const schoolId = scopedSchoolId(user);
+  const termId = params.term_id || null;
+  const result = await query(
+    `select ta.id, ta.typing_test_id, ta.term_id, ta.grade, ta.is_active, ta.available_from, ta.available_until, ta.assigned_at,
+            tt.title, tt.duration_seconds, tt.grade_levels, tt.is_global,
+            count(distinct u.id)::int as learner_count,
+            count(distinct at.id)::int as attempts
+     from typing_assignments ta
+     join typing_tests tt on tt.id = ta.typing_test_id
+     left join users u on u.school_id = ta.school_id and u.role = 'student' and u.grade = ta.grade and u.deleted_at is null
+     left join typing_attempts at on at.assignment_id = ta.id
+     where ta.school_id = $1 and ($2::uuid is null or ta.term_id = $2)
+     group by ta.id, tt.id
+     order by ta.assigned_at desc`,
+    [schoolId, termId]
+  );
+  return result.rows;
+}
+
+async function typingPerformance(user, params = {}) {
+  const schoolId = scopedSchoolId(user);
+  const termId = params.term_id || null;
+  const result = await query(
+    `select ta.typing_test_id, tt.title as test_title, count(at.id)::int as attempts,
+            avg(at.wpm)::numeric as average_wpm,
+            max(at.wpm)::numeric as best_wpm,
+            avg(at.accuracy)::numeric as average_accuracy
+     from typing_attempts at
+     left join typing_assignments ta on ta.id = at.assignment_id
+     left join typing_tests tt on tt.id = at.typing_test_id
+     where at.school_id = $1 and ($2::uuid is null or at.term_id = $2)
+     group by ta.typing_test_id, tt.title
+     order by tt.title nulls last`,
+    [schoolId, termId]
+  );
+  return result.rows;
 }
 
 async function quizResults(user, params = {}) {
@@ -514,7 +749,7 @@ async function createSchoolQuiz(user, payload) {
     error.statusCode = 400;
     throw error;
   }
-  return one(
+  const quiz = await one(
     `insert into quizzes (
        school_id, title, description, grade_levels, max_attempts, total_points,
        time_limit_seconds, randomise_order, is_global, is_published, created_by
@@ -532,6 +767,15 @@ async function createSchoolQuiz(user, payload) {
       user.sub
     ]
   );
+  await recordAudit({
+    actor: user,
+    action: "quiz.create_school",
+    targetType: "quiz",
+    targetId: quiz.id,
+    schoolId,
+    metadata: { title: quiz.title, grade_levels: quiz.grade_levels }
+  });
+  return quiz;
 }
 
 async function addQuestionToSchoolQuiz(user, quizId, payload) {
@@ -559,8 +803,65 @@ async function addQuestionToSchoolQuiz(user, quizId, payload) {
     );
     const order = await client.query("select coalesce(max(sort_order), 0) + 1 as next_order from quiz_items where quiz_id = $1", [quizId]);
     await client.query("insert into quiz_items (quiz_id, question_id, sort_order) values ($1, $2, $3)", [quizId, question.rows[0].id, order.rows[0].next_order]);
+    await recordAudit({
+      client,
+      actor: user,
+      action: "quiz.add_question_school",
+      targetType: "quiz",
+      targetId: quizId,
+      schoolId,
+      metadata: { question_id: question.rows[0].id }
+    });
     return question.rows[0];
   });
+}
+
+async function bulkAddQuestionsToSchoolQuiz(user, quizId, rows) {
+  const schoolId = scopedSchoolId(user);
+  const created = [];
+  const errors = [];
+  await transaction(async (client) => {
+    const quiz = await client.query("select id from quizzes where id = $1 and school_id = $2 and is_global = false and deleted_at is null", [quizId, schoolId]);
+    if (!quiz.rows[0]) {
+      const error = new Error("School quiz not found");
+      error.statusCode = 404;
+      throw error;
+    }
+    let orderResult = await client.query("select coalesce(max(sort_order), 0) + 1 as next_order from quiz_items where quiz_id = $1", [quizId]);
+    let sortOrder = Number(orderResult.rows[0].next_order);
+    for (const row of rows) {
+      if (!row.question || !row.option_a || !row.option_b || !row.option_c || !row.option_d || !row.correct_option) {
+        errors.push({ row: row.__rowNumber, error: "question, option_a, option_b, option_c, option_d, and correct_option are required" });
+        continue;
+      }
+      try {
+        const result = await client.query(
+          `insert into quiz_questions (school_id, question, option_a, option_b, option_c, option_d, correct_option, is_global)
+           values ($1, $2, $3, $4, $5, $6, $7, false)
+           returning id, question`,
+          [schoolId, row.question, row.option_a, row.option_b, row.option_c, row.option_d, normalizeCorrectOption(row.correct_option)]
+        );
+        await client.query(
+          "insert into quiz_items (quiz_id, question_id, sort_order) values ($1, $2, $3)",
+          [quizId, result.rows[0].id, sortOrder]
+        );
+        sortOrder += 1;
+        created.push(result.rows[0]);
+      } catch (error) {
+        errors.push({ row: row.__rowNumber, error: error.message });
+      }
+    }
+    await recordAudit({
+      client,
+      actor: user,
+      action: "quiz.bulk_add_questions_school",
+      targetType: "quiz",
+      targetId: quizId,
+      schoolId,
+      metadata: { imported: created.length, errors: errors.length }
+    });
+  });
+  return { created, errors };
 }
 
 async function assignQuiz(user, quizId, payload) {
@@ -599,18 +900,30 @@ async function assignQuiz(user, quizId, payload) {
     const assigned = [];
     for (const grade of grades) {
       const result = await client.query(
-        `insert into quiz_assignments (quiz_id, school_id, term_id, grade, assigned_by, max_attempts, is_active)
-         values ($1, $2, $3, $4, $5, $6, true)
+        `insert into quiz_assignments (quiz_id, school_id, term_id, grade, assigned_by, max_attempts, available_from, available_until, is_active)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, true)
          on conflict (quiz_id, school_id, term_id, grade) do update set
            max_attempts = excluded.max_attempts,
+           available_from = excluded.available_from,
+           available_until = excluded.available_until,
            is_active = true,
            assigned_by = excluded.assigned_by,
            assigned_at = now()
          returning *`,
-        [quizId, schoolId, termId, grade, user.sub, Number(payload.max_attempts || quiz.max_attempts || 1)]
+        [quizId, schoolId, termId, grade, user.sub, Number(payload.max_attempts || quiz.max_attempts || 1), payload.available_from || null, payload.available_until || null]
       );
       assigned.push(result.rows[0]);
     }
+    await recordAudit({
+      client,
+      actor: user,
+      action: "quiz.assign",
+      targetType: "quiz",
+      targetId: quizId,
+      schoolId,
+      termId,
+      metadata: { grades, count: assigned.length }
+    });
     return { assigned, count: assigned.length };
   });
 }
@@ -619,7 +932,7 @@ async function quizAssignments(user, params = {}) {
   const schoolId = scopedSchoolId(user);
   const termId = params.term_id || null;
   const result = await query(
-    `select qa.id, qa.quiz_id, qa.term_id, qa.grade, qa.max_attempts, qa.is_active, qa.assigned_at,
+    `select qa.id, qa.quiz_id, qa.term_id, qa.grade, qa.max_attempts, qa.is_active, qa.available_from, qa.available_until, qa.assigned_at,
             q.title, q.grade_levels, q.is_global, q.total_points,
             count(distinct u.id)::int as learner_count
      from quiz_assignments qa
@@ -656,14 +969,49 @@ async function leaderboards(user, params = {}) {
   const { limit, offset } = pagination(params);
   const termId = params.term_id || null;
   return list(
-    `select le.id, le.learner_id, le.term_id, le.leaderboard_type, le.score, le.rank,
-            u.full_name as learner_name, u.grade, u.stream
-     from leaderboard_entries le
-     join users u on u.id = le.learner_id
-     where le.school_id = $1 and ($2::uuid is null or le.term_id = $2)
-     order by le.leaderboard_type, le.rank asc limit $3 offset $4`,
+    `with quiz_scores as (
+       select qa.learner_id, qa.school_id, qa.term_id, max(qa.score)::numeric as score, max(qa.created_at) as created_at
+       from quiz_attempts qa
+       where qa.school_id = $1 and ($2::uuid is null or qa.term_id = $2)
+       group by qa.learner_id, qa.school_id, qa.term_id
+     ),
+     quiz_ranked as (
+       select concat('quiz-', qs.term_id, '-', qs.learner_id) as id, qs.learner_id, qs.school_id, qs.term_id,
+              'quiz'::text as leaderboard_type, qs.score,
+              dense_rank() over (partition by qs.school_id, qs.term_id order by qs.score desc, qs.created_at asc)::int as rank,
+              qs.created_at
+       from quiz_scores qs
+     ),
+     typing_ranked as (
+       select concat('typing-', tr.term_id, '-', tr.learner_id) as id, tr.learner_id, tr.school_id, tr.term_id,
+              'typing'::text as leaderboard_type, tr.wpm::numeric as score,
+              dense_rank() over (partition by tr.school_id, tr.term_id order by tr.wpm desc, tr.accuracy desc, tr.created_at asc)::int as rank,
+              tr.created_at
+       from typing_results tr
+       where tr.school_id = $1 and ($2::uuid is null or tr.term_id = $2)
+     ),
+     stored_ranked as (
+       select le.id::text, le.learner_id, le.school_id, le.term_id, le.leaderboard_type, le.score, le.rank, le.created_at
+       from leaderboard_entries le
+       where le.school_id = $1 and ($2::uuid is null or le.term_id = $2) and le.leaderboard_type not in ('quiz', 'typing')
+     ),
+     combined as (
+       select * from stored_ranked
+       union all select * from quiz_ranked
+       union all select * from typing_ranked
+     )
+     select c.id, c.learner_id, c.term_id, c.leaderboard_type, c.score, c.rank, c.created_at,
+            coalesce(u.full_name, u.name) as learner_name, u.grade, u.stream
+     from combined c
+     join users u on u.id = c.learner_id
+     order by c.leaderboard_type, c.rank asc, coalesce(u.full_name, u.name)
+     limit $3 offset $4`,
     [schoolId, termId, limit, offset],
-    "select count(*) from leaderboard_entries where school_id = $1 and ($2::uuid is null or term_id = $2)",
+    `select (
+       (select count(*) from leaderboard_entries where school_id = $1 and ($2::uuid is null or term_id = $2) and leaderboard_type not in ('quiz', 'typing')) +
+       (select count(*) from (select learner_id, term_id from quiz_attempts where school_id = $1 and ($2::uuid is null or term_id = $2) group by learner_id, term_id) q) +
+       (select count(*) from typing_results where school_id = $1 and ($2::uuid is null or term_id = $2))
+     ) as count`,
     [schoolId, termId]
   );
 }
@@ -692,7 +1040,7 @@ async function ensurePreferences(user) {
 
 async function updatePreferences(user, payload) {
   const schoolId = scopedSchoolId(user);
-  return one(
+  const updated = await one(
     `insert into school_preferences (
        school_id, typing_passage_words, typing_timer_seconds, module_pass_threshold,
        leaderboards_visible, ai_enabled, notification_preferences, report_header_fields
@@ -719,6 +1067,14 @@ async function updatePreferences(user, payload) {
       payload.report_header_fields || {}
     ]
   );
+  await recordAudit({
+    actor: user,
+    action: "school.preferences_update",
+    targetType: "school",
+    targetId: schoolId,
+    schoolId
+  });
+  return updated;
 }
 
 async function streams(user) {
@@ -732,12 +1088,21 @@ async function streams(user) {
 
 async function addStream(user, payload) {
   const schoolId = scopedSchoolId(user);
-  return one(
+  const stream = await one(
     `insert into school_streams (school_id, grade, name)
      values ($1, null, $2)
      returning *`,
     [schoolId, payload.name]
   );
+  await recordAudit({
+    actor: user,
+    action: "school.stream_create",
+    targetType: "school",
+    targetId: schoolId,
+    schoolId,
+    metadata: { stream: stream.name }
+  });
+  return stream;
 }
 
 async function deleteStream(user, streamId) {
@@ -765,7 +1130,7 @@ function averageNumber(rows, key) {
 
 async function learnerDetail(user, learnerId, params = {}) {
   const schoolId = scopedSchoolId(user);
-  const [learner, term] = await Promise.all([
+  const [learner, term, school] = await Promise.all([
     one(
     `select id, coalesce(full_name, name) as full_name, username, grade, stream, parent_name, parent_email, parent_phone,
             is_active, created_at, last_login_at
@@ -774,11 +1139,12 @@ async function learnerDetail(user, learnerId, params = {}) {
     [learnerId, schoolId]
     ),
     params.term_id ? one(
-      `select t.id, t.name, t.starts_on, t.ends_on, ay.year
+      `select t.id, coalesce(t.label, t.name::text) as name, t.starts_on, t.ends_on, ay.year
        from terms t join academic_years ay on ay.id = t.academic_year_id
        where t.id = $1`,
       [params.term_id]
-    ) : activeTerm(user)
+    ) : activeTerm(user),
+    one("select id, name, logo_url from schools where id = $1", [schoolId])
   ]);
   if (!learner) {
     const error = new Error("Learner not found");
@@ -794,7 +1160,7 @@ async function learnerDetail(user, learnerId, params = {}) {
 
   const [enrolments, submissions, reports, typing, quizzes, progress, quizTrend] = await Promise.all([
     query(
-      `select e.id, e.status, e.created_at, coalesce(c.name, c.title) as course_name, t.name as term_name, ay.year
+      `select e.id, e.status, e.created_at, coalesce(c.name, c.title) as course_name, coalesce(t.label, t.name::text) as term_name, ay.year
        from enrolments e
        join courses c on c.id = e.course_id
        join terms t on t.id = e.term_id
@@ -811,7 +1177,7 @@ async function learnerDetail(user, learnerId, params = {}) {
       [schoolId, learnerId, termId]
     ),
     query(
-      `select rc.id, rc.pdf_url, rc.teacher_remarks, rc.snapshot, rc.published_at, rc.created_at, t.name as term_name, ay.year
+      `select rc.id, rc.pdf_url, rc.teacher_remarks, rc.snapshot, rc.published_at, rc.created_at, coalesce(t.label, t.name::text) as term_name, ay.year
        from report_cards rc
        join terms t on t.id = rc.term_id
        join academic_years ay on ay.id = t.academic_year_id
@@ -820,7 +1186,7 @@ async function learnerDetail(user, learnerId, params = {}) {
       [schoolId, learnerId, termId]
     ),
     query(
-      `select tr.id, tr.wpm, tr.accuracy, tr.time_taken_seconds, tr.created_at, t.name as term_name, ay.year
+      `select tr.id, tr.wpm, tr.accuracy, tr.time_taken_seconds, tr.created_at, coalesce(t.label, t.name::text) as term_name, ay.year
        from typing_results tr
        join terms t on t.id = tr.term_id
        join academic_years ay on ay.id = t.academic_year_id
@@ -829,7 +1195,7 @@ async function learnerDetail(user, learnerId, params = {}) {
       [schoolId, learnerId, termId]
     ),
     query(
-      `select qa.id, qa.score, qa.time_taken_seconds, qa.created_at, q.title as quiz_title, t.name as term_name, ay.year
+      `select qa.id, qa.score, qa.time_taken_seconds, qa.created_at, q.title as quiz_title, coalesce(t.label, t.name::text) as term_name, ay.year
        from quiz_attempts qa
        left join quizzes q on q.id = qa.quiz_id
        join terms t on t.id = qa.term_id
@@ -862,6 +1228,7 @@ async function learnerDetail(user, learnerId, params = {}) {
 
   const report = {
     learner,
+    school,
     term,
     courses: enrolments.rows,
     typing_summary: {
@@ -882,6 +1249,7 @@ async function learnerDetail(user, learnerId, params = {}) {
 
   return {
     learner,
+    school,
     selected_term: term,
     course_history: enrolments.rows,
     submissions: submissions.rows,
@@ -947,6 +1315,16 @@ async function bulkAllocateCourse(user, payload) {
       );
       inserted.push(result.rows[0]);
     }
+    await recordAudit({
+      client,
+      actor: user,
+      action: "course.bulk_allocate",
+      targetType: "course",
+      targetId: payload.course_id,
+      schoolId,
+      termId,
+      metadata: { learners: inserted.length }
+    });
     return { allocated: inserted, count: inserted.length };
   });
 }
@@ -964,15 +1342,23 @@ module.exports = {
   addLearner,
   bulkImportLearners,
   updateLearner,
+  setLearnerActive,
   promoteLearner,
   listSubmissions,
   reviewSubmission,
   typingResults,
+  globalTypingTests,
+  schoolTypingTests,
+  createSchoolTypingTest,
+  assignTypingTest,
+  typingAssignments,
+  typingPerformance,
   quizResults,
   globalQuizzes,
   schoolQuizzes,
   createSchoolQuiz,
   addQuestionToSchoolQuiz,
+  bulkAddQuestionsToSchoolQuiz,
   assignQuiz,
   quizAssignments,
   quizPerformance,

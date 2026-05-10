@@ -14,7 +14,7 @@ import {
   Target,
   Trophy
 } from "lucide-react";
-import { api } from "../../lib/api";
+import { api, assetUrl } from "../../lib/api";
 import { currentUser, logout } from "../../lib/auth";
 import "./student-dashboard.css";
 
@@ -35,6 +35,20 @@ function formatDate(value) {
 function numberLabel(value, suffix = "") {
   if (value === null || value === undefined || Number.isNaN(Number(value))) return "-";
   return `${Number(value).toFixed(1)}${suffix}`;
+}
+
+function liveTypingStats(passage, typedText, startedAt) {
+  const typed = String(typedText || "");
+  const expected = String(passage || "");
+  const elapsedMinutes = startedAt ? Math.max((Date.now() - startedAt) / 60000, 1 / 60) : 1 / 60;
+  let correct = 0;
+  for (let index = 0; index < typed.length; index += 1) {
+    if (typed[index] === expected[index]) correct += 1;
+  }
+  return {
+    wpm: (correct / 5) / elapsedMinutes,
+    accuracy: typed.length ? (correct / typed.length) * 100 : 100
+  };
 }
 
 function StatCard({ label, value, icon: Icon, tone }) {
@@ -70,30 +84,32 @@ function CourseBars({ rows }) {
   );
 }
 
-function TrendChart({ rows }) {
+function TrendChart({ rows, valueKey = "average_score", valueLabel = "Score" }) {
   if (!rows?.length) return <EmptyState title="No weekly quiz trend yet." />;
   const width = 520;
   const height = 170;
   const padding = 26;
   const points = rows.map((row, index) => {
     const x = rows.length === 1 ? width / 2 : padding + (index * (width - padding * 2)) / (rows.length - 1);
-    const y = height - padding - (Number(row.average_score || 0) / 100) * (height - padding * 2);
+    const y = height - padding - (Number(row[valueKey] || 0) / 100) * (height - padding * 2);
     return `${x},${y}`;
   }).join(" ");
   return (
     <div className="student-trend-chart">
       <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Weekly quiz trend">
+        <text x={width / 2} y={height - 4} textAnchor="middle">{valueLabel} by week</text>
+        <text x="12" y={height / 2} textAnchor="middle" transform={`rotate(-90 12 ${height / 2})`}>{valueLabel}</text>
         <line x1={padding} y1={height - padding} x2={width - padding} y2={height - padding} />
         <line x1={padding} y1={padding} x2={padding} y2={height - padding} />
         <polyline points={points} />
         {rows.map((row, index) => {
           const x = rows.length === 1 ? width / 2 : padding + (index * (width - padding * 2)) / (rows.length - 1);
-          const y = height - padding - (Number(row.average_score || 0) / 100) * (height - padding * 2);
+          const y = height - padding - (Number(row[valueKey] || 0) / 100) * (height - padding * 2);
           return <circle key={row.week_start || index} cx={x} cy={y} r="5" />;
         })}
       </svg>
       <div className="student-trend-labels">
-        {rows.map((row, index) => <span key={row.week_start || index}>Week {index + 1}: {Number(row.average_score || 0).toFixed(1)}</span>)}
+        {rows.map((row, index) => <span key={row.week_start || index}>Week {index + 1}: {Number(row[valueKey] || 0).toFixed(1)}</span>)}
       </div>
     </div>
   );
@@ -101,6 +117,9 @@ function TrendChart({ rows }) {
 
 function DataTable({ rows, columns, emptyTitle }) {
   if (!rows?.length) return <EmptyState title={emptyTitle} />;
+  const rowKey = (row, index) => {
+    return row.id || row.enrolment_id || row.course_id || row.quiz_id || row.assignment_id || row.created_at || `${row.leaderboard_type || "row"}-${row.rank || index}-${index}`;
+  };
   return (
     <div className="table-wrap">
       <table>
@@ -108,8 +127,8 @@ function DataTable({ rows, columns, emptyTitle }) {
           <tr>{columns.map((column) => <th key={column.key}>{column.label}</th>)}</tr>
         </thead>
         <tbody>
-          {rows.map((row) => (
-            <tr key={row.id || row.course_id || `${row.leaderboard_type}-${row.rank}`}>
+          {rows.map((row, index) => (
+            <tr key={rowKey(row, index)}>
               {columns.map((column) => <td key={column.key}>{column.render ? column.render(row) : row[column.key]}</td>)}
             </tr>
           ))}
@@ -119,13 +138,67 @@ function DataTable({ rows, columns, emptyTitle }) {
   );
 }
 
+function LiveReportCard({ report }) {
+  if (!report) return <EmptyState title="No live report data yet." />;
+  const logo = report.school?.logo_url ? assetUrl(report.school.logo_url) : "";
+  const termLabel = report.term ? `${report.term.year} - ${report.term.name}` : "No active term";
+  const summary = report.summary || {};
+  return (
+    <div className="student-report-card">
+      <div className="student-report-header">
+        {logo ? <img className="student-report-logo" src={logo} alt={`${report.school?.name || "School"} logo`} onError={(event) => { event.currentTarget.style.display = "none"; }} /> : null}
+        <div>
+          <p className="eyebrow">{report.school?.name || "Your school"}</p>
+          <h2>{report.learner?.full_name || "Learner"} Report Card</h2>
+          <p>Grade {report.learner?.grade || "-"}{report.learner?.stream ? ` - ${report.learner.stream}` : ""} - {termLabel}</p>
+        </div>
+      </div>
+      <div className="student-report-summary">
+        <StatCard label="Courses" value={summary.courses || 0} icon={BookOpen} tone="blue" />
+        <StatCard label="Quiz avg" value={numberLabel(summary.quiz_average)} icon={Target} tone="gold" />
+        <StatCard label="Typing WPM" value={numberLabel(summary.typing_average_wpm)} icon={Gauge} tone="coral" />
+      </div>
+      <section>
+        <h3>Courses</h3>
+        <DataTable rows={report.courses} emptyTitle="No courses allocated for this term." columns={[
+          { key: "course_name", label: "Course" },
+          { key: "club", label: "Club", render: (row) => row.club || "-" },
+          { key: "status", label: "Status" },
+          { key: "term_name", label: "Term" }
+        ]} />
+      </section>
+      <section>
+        <h3>Assessments</h3>
+        <DataTable rows={report.quiz_results} emptyTitle="No quiz attempts for this term." columns={[
+          { key: "quiz_title", label: "Quiz", render: (row) => row.quiz_title || "Untitled quiz" },
+          { key: "score", label: "Score", render: (row) => numberLabel(row.score) },
+          { key: "created_at", label: "Date", render: (row) => formatDate(row.created_at) }
+        ]} />
+      </section>
+      <section>
+        <h3>Leaderboard</h3>
+        <DataTable rows={report.leaderboards} emptyTitle="No leaderboard placement yet." columns={[
+          { key: "leaderboard_type", label: "Type" },
+          { key: "rank", label: "Rank" },
+          { key: "score", label: "Score", render: (row) => numberLabel(row.score) }
+        ]} />
+      </section>
+    </div>
+  );
+}
+
 export default function StudentPage() {
   const [activeTab, setActiveTab] = useState("overview");
   const [user, setUser] = useState(null);
   const [dashboard, setDashboard] = useState(null);
   const [activeQuiz, setActiveQuiz] = useState(null);
+  const [activeTyping, setActiveTyping] = useState(null);
   const [answers, setAnswers] = useState({});
+  const [typedText, setTypedText] = useState("");
+  const [typingStartedAt, setTypingStartedAt] = useState(null);
+  const [typingRemaining, setTypingRemaining] = useState(0);
   const [quizResult, setQuizResult] = useState(null);
+  const [typingResult, setTypingResult] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -169,6 +242,20 @@ export default function StudentPage() {
     }
   }
 
+  async function openTypingTest(testId) {
+    setError("");
+    setTypingResult(null);
+    setTypedText("");
+    setTypingStartedAt(null);
+    try {
+      const test = await api.get(`/student/typing-tests/${testId}`);
+      setActiveTyping(test);
+      setTypingRemaining(Number(test.duration_seconds || 300));
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
   async function submitQuiz(event) {
     event.preventDefault();
     setError("");
@@ -180,6 +267,35 @@ export default function StudentPage() {
       setError(err.message);
     }
   }
+
+  async function submitTyping(event) {
+    event.preventDefault();
+    setError("");
+    try {
+      const elapsed = typingStartedAt ? Math.max(Math.round((Date.now() - typingStartedAt) / 1000), 1) : 1;
+      const result = await api.post(`/student/typing-tests/${activeTyping.typing_test_id}/attempts`, {
+        typed_text: typedText,
+        time_taken_seconds: elapsed
+      });
+      setTypingResult(result);
+      await loadDashboard();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  useEffect(() => {
+    if (!activeTyping || !typingStartedAt || typingResult) return undefined;
+    const timer = window.setInterval(() => {
+      const elapsed = Math.max(Math.floor((Date.now() - typingStartedAt) / 1000), 0);
+      const remaining = Math.max(Number(activeTyping.duration_seconds || 300) - elapsed, 0);
+      setTypingRemaining(remaining);
+      if (remaining <= 0) {
+        window.clearInterval(timer);
+      }
+    }, 250);
+    return () => window.clearInterval(timer);
+  }, [activeTyping, typingStartedAt, typingResult]);
 
   return (
     <main className="student-shell">
@@ -202,10 +318,13 @@ export default function StudentPage() {
 
       <section className="student-main">
         <header className="student-hero">
-          <div>
-            <p className="eyebrow">{dashboard?.learner?.school_name || "Your school"} - {activeTermLabel}</p>
-            <h1>Hi, {dashboard?.learner?.full_name || user?.full_name || "learner"}</h1>
-            <p>Track your courses, typing growth, quizzes, badges, and reports from one bright learning space.</p>
+          <div className="student-hero-title">
+            {dashboard?.learner?.school_logo_url ? <img className="student-school-logo" src={assetUrl(dashboard.learner.school_logo_url)} alt={`${dashboard.learner.school_name} logo`} onError={(event) => { event.currentTarget.style.display = "none"; }} /> : null}
+            <div>
+              <p className="eyebrow">{dashboard?.learner?.school_name || "Your school"} - {activeTermLabel}</p>
+              <h1>Hi, {dashboard?.learner?.full_name || user?.full_name || "learner"}</h1>
+              <p>Track your courses, typing growth, quizzes, badges, and reports from one bright learning space.</p>
+            </div>
           </div>
           <div className="student-level-card">
             <Medal size={28} />
@@ -241,7 +360,7 @@ export default function StudentPage() {
             </section>
             <section className="student-panel">
               <h2>Weekly Quiz Trend</h2>
-              <TrendChart rows={dashboard.weekly_quiz_trend} />
+              <TrendChart rows={dashboard.weekly_quiz_trend} valueKey="best_score" valueLabel="Best quiz score" />
             </section>
           </div>
         )}
@@ -259,15 +378,21 @@ export default function StudentPage() {
         )}
 
         {!loading && dashboard && activeTab === "reports" && (
-          <section className="student-panel">
-            <h2>Reports</h2>
-            <DataTable rows={dashboard.reports} emptyTitle="No report cards published yet." columns={[
-              { key: "term_name", label: "Term" },
-              { key: "year", label: "Year" },
-              { key: "teacher_remarks", label: "Remarks", render: (row) => row.teacher_remarks || "-" },
-              { key: "published_at", label: "Published", render: (row) => row.published_at ? formatDate(row.published_at) : "-" }
-            ]} />
-          </section>
+          <div className="student-section">
+            <section className="student-panel">
+              <h2>Live Report Card</h2>
+              <LiveReportCard report={dashboard.report_card} />
+            </section>
+            <section className="student-panel">
+              <h2>Published Reports</h2>
+              <DataTable rows={dashboard.reports} emptyTitle="No published report cards yet." columns={[
+                { key: "term_name", label: "Term" },
+                { key: "year", label: "Year" },
+                { key: "teacher_remarks", label: "Remarks", render: (row) => row.teacher_remarks || "-" },
+                { key: "published_at", label: "Published", render: (row) => row.published_at ? formatDate(row.published_at) : "-" }
+              ]} />
+            </section>
+          </div>
         )}
 
         {!loading && dashboard && activeTab === "badges" && (
@@ -283,15 +408,31 @@ export default function StudentPage() {
         )}
 
         {!loading && dashboard && activeTab === "typing" && (
-          <section className="student-panel">
-            <h2>Typing Results</h2>
-            <DataTable rows={dashboard.typing_results} emptyTitle="No typing results for this term." columns={[
-              { key: "wpm", label: "WPM" },
-              { key: "accuracy", label: "Accuracy", render: (row) => numberLabel(row.accuracy, "%") },
-              { key: "time_taken_seconds", label: "Time" },
-              { key: "created_at", label: "Date", render: (row) => formatDate(row.created_at) }
-            ]} />
-          </section>
+          <div className="student-section">
+            <section className="student-panel">
+              <h2>Assigned Typing Tests</h2>
+              <DataTable rows={dashboard.assigned_typing_tests} emptyTitle="No typing tests assigned for this week." columns={[
+                { key: "title", label: "Test" },
+                { key: "duration_seconds", label: "Seconds" },
+                { key: "best_wpm", label: "Best WPM", render: (row) => row.best_wpm == null ? "-" : Number(row.best_wpm).toFixed(1) },
+                { key: "action", label: "Action", render: (row) => <button type="button" onClick={() => openTypingTest(row.typing_test_id)}>Start test</button> }
+              ]} />
+            </section>
+            <section className="student-panel">
+              <h2>Weekly Typing Trend</h2>
+              <TrendChart rows={dashboard.weekly_typing_trend} valueKey="best_wpm" valueLabel="Best WPM" />
+            </section>
+            <section className="student-panel">
+              <h2>Typing Results</h2>
+              <DataTable rows={dashboard.typing_results} emptyTitle="No typing results for this term." columns={[
+                { key: "test_title", label: "Test", render: (row) => row.test_title || "Typing test" },
+                { key: "wpm", label: "WPM" },
+                { key: "accuracy", label: "Accuracy", render: (row) => numberLabel(row.accuracy, "%") },
+                { key: "time_taken_seconds", label: "Time" },
+                { key: "created_at", label: "Date", render: (row) => formatDate(row.created_at) }
+              ]} />
+            </section>
+          </div>
         )}
 
         {!loading && dashboard && activeTab === "quizzes" && (
@@ -354,6 +495,56 @@ export default function StudentPage() {
                   </fieldset>
                 ))}
                 <button type="submit"><CheckCircle2 size={16} />Submit quiz</button>
+              </form>
+            )}
+          </section>
+        </div>
+      ) : null}
+      {activeTyping ? (
+        <div className="quiz-take-backdrop">
+          <section className="quiz-take-panel" role="dialog" aria-modal="true" aria-label={activeTyping.title}>
+            <div className="quiz-take-header">
+              <div>
+                <p className="eyebrow">Typing Test</p>
+                <h2>{activeTyping.title}</h2>
+                <p>Time remaining: {typingRemaining}s</p>
+              </div>
+              <button type="button" className="student-secondary" onClick={() => setActiveTyping(null)}>Close</button>
+            </div>
+            {typingResult ? (
+              <div className="quiz-result-card">
+                <CheckCircle2 size={28} />
+                <strong>{Number(typingResult.wpm).toFixed(1)} WPM</strong>
+                <span>{Number(typingResult.accuracy).toFixed(1)}% accuracy</span>
+                <button type="button" onClick={() => setActiveTyping(null)}>Done</button>
+              </div>
+            ) : (
+              <form className="quiz-take-form" onSubmit={submitTyping}>
+                <div className="typing-passage">{activeTyping.passage}</div>
+                {(() => {
+                  const stats = liveTypingStats(activeTyping.passage, typedText, typingStartedAt);
+                  return (
+                    <div className="student-stat-grid">
+                      <StatCard label="Speed" value={numberLabel(stats.wpm)} icon={Gauge} tone="blue" />
+                      <StatCard label="Accuracy" value={numberLabel(stats.accuracy, "%")} icon={Target} tone="green" />
+                      <StatCard label="Remaining" value={`${typingRemaining}s`} icon={BarChart3} tone="gold" />
+                    </div>
+                  );
+                })()}
+                <textarea
+                  className="typing-input"
+                  value={typedText}
+                  onKeyDown={(event) => {
+                    if (!typingStartedAt) setTypingStartedAt(Date.now());
+                    if (event.key === "Backspace") event.preventDefault();
+                  }}
+                  onChange={(event) => setTypedText(event.target.value)}
+                  disabled={typingRemaining <= 0}
+                  rows={7}
+                  autoFocus
+                  required
+                />
+                <button type="submit"><CheckCircle2 size={16} />Submit typing test</button>
               </form>
             )}
           </section>

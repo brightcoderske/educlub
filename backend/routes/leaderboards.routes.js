@@ -24,16 +24,76 @@ router.get("/", async (req, res, next) => {
       where.push(`le.leaderboard_type = $${values.length}`);
     }
     values.push(limit, offset);
+    const dynamicWhere = where.map((clause) => clause.replace(/le\./g, "c."));
     res.json(await list(
-      `select le.id, le.learner_id, le.school_id, le.term_id, le.leaderboard_type, le.score, le.rank,
-              u.full_name, u.grade, u.stream, s.name as school_name
-       from leaderboard_entries le
-       join users u on u.id = le.learner_id
-       join schools s on s.id = le.school_id
-       where ${where.join(" and ")}
-       order by le.rank asc limit $${values.length - 1} offset $${values.length}`,
+      `with quiz_scores as (
+         select qa.learner_id, qa.school_id, qa.term_id, max(qa.score)::numeric as score, max(qa.created_at) as created_at
+         from quiz_attempts qa
+         group by qa.learner_id, qa.school_id, qa.term_id
+       ),
+       quiz_ranked as (
+         select concat('quiz-', qs.term_id, '-', qs.learner_id) as id, qs.learner_id, qs.school_id, qs.term_id,
+                'quiz'::text as leaderboard_type, qs.score,
+                dense_rank() over (partition by qs.school_id, qs.term_id order by qs.score desc, qs.created_at asc)::int as rank,
+                qs.created_at
+         from quiz_scores qs
+       ),
+       typing_ranked as (
+         select concat('typing-', tr.term_id, '-', tr.learner_id) as id, tr.learner_id, tr.school_id, tr.term_id,
+                'typing'::text as leaderboard_type, tr.wpm::numeric as score,
+                dense_rank() over (partition by tr.school_id, tr.term_id order by tr.wpm desc, tr.accuracy desc, tr.created_at asc)::int as rank,
+                tr.created_at
+         from typing_results tr
+       ),
+       stored_ranked as (
+         select le.id::text, le.learner_id, le.school_id, le.term_id, le.leaderboard_type, le.score, le.rank, le.created_at
+         from leaderboard_entries le
+         where le.leaderboard_type not in ('quiz', 'typing')
+       ),
+       combined as (
+         select * from stored_ranked
+         union all select * from quiz_ranked
+         union all select * from typing_ranked
+       )
+       select c.id, c.learner_id, c.school_id, c.term_id, c.leaderboard_type, c.score, c.rank, c.created_at,
+              coalesce(u.full_name, u.name) as full_name, u.grade, u.stream, s.name as school_name
+       from combined c
+       join users u on u.id = c.learner_id
+       join schools s on s.id = c.school_id
+       where ${dynamicWhere.join(" and ")}
+       order by c.leaderboard_type, c.rank asc, coalesce(u.full_name, u.name)
+       limit $${values.length - 1} offset $${values.length}`,
       values,
-      `select count(*) from leaderboard_entries le where ${where.join(" and ")}`,
+      `with quiz_scores as (
+         select qa.learner_id, qa.school_id, qa.term_id, max(qa.score)::numeric as score, max(qa.created_at) as created_at
+         from quiz_attempts qa
+         group by qa.learner_id, qa.school_id, qa.term_id
+       ),
+       quiz_ranked as (
+         select concat('quiz-', qs.term_id, '-', qs.learner_id) as id, qs.learner_id, qs.school_id, qs.term_id,
+                'quiz'::text as leaderboard_type, qs.score,
+                dense_rank() over (partition by qs.school_id, qs.term_id order by qs.score desc, qs.created_at asc)::int as rank,
+                qs.created_at
+         from quiz_scores qs
+       ),
+       typing_ranked as (
+         select concat('typing-', tr.term_id, '-', tr.learner_id) as id, tr.learner_id, tr.school_id, tr.term_id,
+                'typing'::text as leaderboard_type, tr.wpm::numeric as score,
+                dense_rank() over (partition by tr.school_id, tr.term_id order by tr.wpm desc, tr.accuracy desc, tr.created_at asc)::int as rank,
+                tr.created_at
+         from typing_results tr
+       ),
+       stored_ranked as (
+         select le.id::text, le.learner_id, le.school_id, le.term_id, le.leaderboard_type, le.score, le.rank, le.created_at
+         from leaderboard_entries le
+         where le.leaderboard_type not in ('quiz', 'typing')
+       ),
+       combined as (
+         select * from stored_ranked
+         union all select * from quiz_ranked
+         union all select * from typing_ranked
+       )
+       select count(*) from combined c where ${dynamicWhere.join(" and ")}`,
       values.slice(0, -2)
     ));
   } catch (error) {

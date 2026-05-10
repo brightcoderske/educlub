@@ -448,6 +448,47 @@ button:disabled {
   padding: 6px 8px;
 }
 
+.school-name-link {
+  color: #2367d1;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  text-decoration: none;
+}
+
+.school-title-line,
+.user-action-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.school-logo-sm {
+  width: 64px;
+  height: 64px;
+  object-fit: contain;
+  border-radius: 14px;
+  background: #fff;
+  border: 1px solid #dfe8f2;
+  padding: 6px;
+}
+
+.user-management-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(320px, 0.75fr);
+  gap: 18px;
+}
+
+.user-action-row {
+  flex-wrap: wrap;
+}
+
+.audit-panel {
+  display: grid;
+  gap: 16px;
+}
+
 .table-wrap {
   overflow-x: auto;
 }
@@ -491,6 +532,7 @@ tr:hover td {
   .grade-checks,
   .quiz-manager-grid,
   .quiz-school-grid,
+  .user-management-grid,
   .school-list-grid,
   .detail-grid,
   .detail-form {
@@ -504,6 +546,7 @@ tr:hover td {
 
   .detail-header,
   .danger-zone,
+  .school-title-line,
   .admin-row {
     align-items: stretch;
     flex-direction: column;

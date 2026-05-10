@@ -7,6 +7,7 @@ const router = express.Router();
 router.use(authenticate, requireRoles("system_admin"));
 
 router.get("/", controller.listTerms);
+router.get("/academic-years", controller.listAcademicYears);
 router.post("/academic-years", controller.createAcademicYear);
 router.post("/", controller.createTerm);
 router.patch("/:id/global-active", controller.setGlobalActiveTerm);

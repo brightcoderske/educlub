@@ -9,5 +9,7 @@ router.use(authenticate, requireRoles("student"));
 router.get("/dashboard", controller.dashboard);
 router.get("/quizzes/:id", controller.quizForTaking);
 router.post("/quizzes/:id/attempts", controller.submitQuizAttempt);
+router.get("/typing-tests/:id", controller.typingTestForTaking);
+router.post("/typing-tests/:id/attempts", controller.submitTypingAttempt);
 
 module.exports = router;

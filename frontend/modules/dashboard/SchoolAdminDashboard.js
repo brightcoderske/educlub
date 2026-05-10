@@ -20,7 +20,7 @@ import {
   Upload,
   Users
 } from "lucide-react";
-import { api } from "../../lib/api";
+import { api, assetUrl } from "../../lib/api";
 import { currentUser, logout } from "../../lib/auth";
 
 const tabs = [
@@ -62,6 +62,9 @@ function DataTable({ rows, columns, emptyTitle }) {
   if (!rows?.length) {
     return <EmptyState title={emptyTitle} detail="No real records exist for this school yet." />;
   }
+  const rowKey = (row, index) => {
+    return row.id || row.assignment_id || row.quiz_id || row.course_id || row.learner_id || row.created_at || `${row.grade || "row"}-${row.stream || "none"}-${row.name || row.title || row.quiz_title || index}-${index}`;
+  };
   return (
     <div className="table-wrap">
       <table>
@@ -69,8 +72,8 @@ function DataTable({ rows, columns, emptyTitle }) {
           <tr>{columns.map((column) => <th key={column.key}>{column.label}</th>)}</tr>
         </thead>
         <tbody>
-          {rows.map((row) => (
-            <tr key={row.id || `${row.grade}-${row.stream}-${row.name}`}>
+          {rows.map((row, index) => (
+            <tr key={rowKey(row, index)}>
               {columns.map((column) => <td key={column.key}>{column.render ? column.render(row) : row[column.key]}</td>)}
             </tr>
           ))}
@@ -262,7 +265,9 @@ function CreateSchoolQuizForm({ onCreated }) {
   const [form, setForm] = useState({ title: "", description: "", grade_levels: [1], max_attempts: 1 });
   const [question, setQuestion] = useState({ question: "", option_a: "", option_b: "", option_c: "", option_d: "", correct_option: "A" });
   const [createdQuiz, setCreatedQuiz] = useState(null);
+  const [uploadFile, setUploadFile] = useState(null);
   const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
 
   async function createQuiz(event) {
     event.preventDefault();
@@ -289,6 +294,22 @@ function CreateSchoolQuizForm({ onCreated }) {
     }
   }
 
+  async function uploadQuestions(event) {
+    event.preventDefault();
+    setError("");
+    setMessage("");
+    const formData = new FormData();
+    formData.append("file", uploadFile);
+    try {
+      const result = await api.upload(`/school-admin/school-quizzes/${createdQuiz.id}/questions/upload`, formData);
+      setMessage(`${result.created.length} questions imported. ${result.errors.length} row errors.`);
+      setUploadFile(null);
+      onCreated();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
   return (
     <section className="panel compact-panel">
       <h3>Create School Quiz</h3>
@@ -301,15 +322,23 @@ function CreateSchoolQuizForm({ onCreated }) {
         <button type="submit"><Plus size={16} />Create quiz</button>
       </form>
       {createdQuiz ? (
-        <form className="question-form" onSubmit={addQuestion}>
-          <p className="success-text">Adding questions to {createdQuiz.title}</p>
-          <label>Question<textarea value={question.question} onChange={(e) => setQuestion({ ...question, question: e.target.value })} required /></label>
-          <div className="option-grid">
-            {["option_a", "option_b", "option_c", "option_d"].map((key) => <label key={key}>{key.replace("_", " ").toUpperCase()}<input value={question[key]} onChange={(e) => setQuestion({ ...question, [key]: e.target.value })} required /></label>)}
-          </div>
-          <label>Correct option<select value={question.correct_option} onChange={(e) => setQuestion({ ...question, correct_option: e.target.value })}><option>A</option><option>B</option><option>C</option><option>D</option></select></label>
-          <button type="submit"><Plus size={16} />Add question</button>
-        </form>
+        <>
+          <form className="question-form" onSubmit={addQuestion}>
+            <p className="success-text">Adding questions to {createdQuiz.title}</p>
+            {message ? <p className="success-text">{message}</p> : null}
+            <label>Question<textarea value={question.question} onChange={(e) => setQuestion({ ...question, question: e.target.value })} required /></label>
+            <div className="option-grid">
+              {["option_a", "option_b", "option_c", "option_d"].map((key) => <label key={key}>{key.replace("_", " ").toUpperCase()}<input value={question[key]} onChange={(e) => setQuestion({ ...question, [key]: e.target.value })} required /></label>)}
+            </div>
+            <label>Correct option<select value={question.correct_option} onChange={(e) => setQuestion({ ...question, correct_option: e.target.value })}><option>A</option><option>B</option><option>C</option><option>D</option></select></label>
+            <button type="submit"><Plus size={16} />Add question</button>
+          </form>
+          <form className="inline-form" onSubmit={uploadQuestions}>
+            <label>Bulk questions CSV/XLSX<input type="file" accept=".csv,.xlsx" onChange={(e) => setUploadFile(e.target.files?.[0] || null)} required /></label>
+            <button type="submit"><Upload size={16} />Upload questions</button>
+            <p className="helper-text">Columns: question, option_a, option_b, option_c, option_d, correct_option.</p>
+          </form>
+        </>
       ) : null}
     </section>
   );
@@ -319,6 +348,8 @@ function QuizAssignmentPanel({ globalQuizzes, schoolQuizzes, assignments, perfor
   const [selectedQuizId, setSelectedQuizId] = useState("");
   const [grades, setGrades] = useState([]);
   const [maxAttempts, setMaxAttempts] = useState(1);
+  const [availableFrom, setAvailableFrom] = useState("");
+  const [availableUntil, setAvailableUntil] = useState("");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
@@ -330,10 +361,17 @@ function QuizAssignmentPanel({ globalQuizzes, schoolQuizzes, assignments, perfor
     setError("");
     setMessage("");
     try {
-      const result = await api.post(`/school-admin/quizzes/${selectedQuizId}/assign`, { grades, max_attempts: Number(maxAttempts || 1) });
+      const result = await api.post(`/school-admin/quizzes/${selectedQuizId}/assign`, {
+        grades,
+        max_attempts: Number(maxAttempts || 1),
+        available_from: availableFrom || null,
+        available_until: availableUntil || null
+      });
       setMessage(`${result.count} quiz assignment rows saved.`);
       setGrades([]);
       setSelectedQuizId("");
+      setAvailableFrom("");
+      setAvailableUntil("");
       onRefresh();
     } catch (err) {
       setError(err.message);
@@ -349,6 +387,8 @@ function QuizAssignmentPanel({ globalQuizzes, schoolQuizzes, assignments, perfor
           {selectedQuiz ? <p className="helper-text">Available to Grade {selectedQuiz.grade_levels?.join("-")}. The backend enforces this if someone tries another grade.</p> : null}
           <GradeChecks value={grades} allowed={selectedQuiz?.grade_levels} onChange={setGrades} />
           <label>Attempts allowed<input type="number" min="1" max="20" value={maxAttempts} onChange={(e) => setMaxAttempts(e.target.value)} /></label>
+          <label>Available from<input type="datetime-local" value={availableFrom} onChange={(e) => setAvailableFrom(e.target.value)} /></label>
+          <label>Available until<input type="datetime-local" value={availableUntil} onChange={(e) => setAvailableUntil(e.target.value)} /></label>
           {error ? <p className="form-error">{error}</p> : null}
           {message ? <p className="success-text">{message}</p> : null}
           <button type="submit"><CheckCircle2 size={16} />Assign quiz</button>
@@ -360,7 +400,8 @@ function QuizAssignmentPanel({ globalQuizzes, schoolQuizzes, assignments, perfor
           { key: "title", label: "Quiz" },
           { key: "grade", label: "Grade" },
           { key: "learner_count", label: "Learners" },
-          { key: "max_attempts", label: "Attempts" }
+          { key: "max_attempts", label: "Attempts" },
+          { key: "available_until", label: "Available until", render: (row) => row.available_until ? formatDate(row.available_until) : "Open" }
         ]} />
       </section>
       <section className="panel compact-panel">
@@ -370,6 +411,102 @@ function QuizAssignmentPanel({ globalQuizzes, schoolQuizzes, assignments, perfor
           { key: "attempts", label: "Attempts" },
           { key: "average_score", label: "Avg", render: (row) => row.average_score ? Number(row.average_score).toFixed(1) : "-" },
           { key: "expectation", label: "Band" }
+        ]} />
+      </section>
+    </div>
+  );
+}
+
+function TypingTestPanel({ globalTests, schoolTests, assignments, performance, onRefresh }) {
+  const [form, setForm] = useState({ title: "", passage: "", duration_seconds: 300, grade_levels: [1] });
+  const [selectedTestId, setSelectedTestId] = useState("");
+  const [grades, setGrades] = useState([]);
+  const [availableFrom, setAvailableFrom] = useState("");
+  const [availableUntil, setAvailableUntil] = useState("");
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  const allTests = [...globalTests, ...schoolTests];
+  const selectedTest = allTests.find((test) => test.id === selectedTestId);
+
+  async function createTest(event) {
+    event.preventDefault();
+    setError("");
+    setMessage("");
+    try {
+      await api.post("/school-admin/typing/school-tests", {
+        ...form,
+        duration_seconds: Number(form.duration_seconds || 300)
+      });
+      setForm({ title: "", passage: "", duration_seconds: 300, grade_levels: [1] });
+      setMessage("Typing test created.");
+      onRefresh();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function assignTest(event) {
+    event.preventDefault();
+    setError("");
+    setMessage("");
+    try {
+      const result = await api.post(`/school-admin/typing/tests/${selectedTestId}/assign`, {
+        grades,
+        available_from: availableFrom || null,
+        available_until: availableUntil || null
+      });
+      setMessage(`${result.count} typing assignment rows saved.`);
+      setGrades([]);
+      setSelectedTestId("");
+      setAvailableFrom("");
+      setAvailableUntil("");
+      onRefresh();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  return (
+    <div className="quiz-school-grid">
+      <section className="panel compact-panel">
+        <h3>Create School Typing Test</h3>
+        <form className="school-form" onSubmit={createTest}>
+          <label>Title<input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} required /></label>
+          <label>Passage<textarea value={form.passage} onChange={(e) => setForm({ ...form, passage: e.target.value })} required /></label>
+          <label>Duration seconds<input type="number" min="30" max="1800" value={form.duration_seconds} onChange={(e) => setForm({ ...form, duration_seconds: e.target.value })} /></label>
+          <GradeChecks value={form.grade_levels} onChange={(gradeLevels) => setForm({ ...form, grade_levels: gradeLevels })} />
+          <button type="submit"><Plus size={16} />Create typing test</button>
+        </form>
+      </section>
+      <section className="panel compact-panel">
+        <h3>Assign Typing Test</h3>
+        <form className="school-form" onSubmit={assignTest}>
+          <label>Typing test<select value={selectedTestId} onChange={(e) => { setSelectedTestId(e.target.value); setGrades([]); }} required><option value="">Select test</option>{allTests.map((test) => <option key={test.id} value={test.id}>{test.title} {test.is_global ? "(global)" : "(school)"}</option>)}</select></label>
+          {selectedTest ? <p className="helper-text">Available to Grade {selectedTest.grade_levels?.join("-")}.</p> : null}
+          <GradeChecks value={grades} allowed={selectedTest?.grade_levels} onChange={setGrades} />
+          <label>Available from<input type="datetime-local" value={availableFrom} onChange={(e) => setAvailableFrom(e.target.value)} /></label>
+          <label>Available until<input type="datetime-local" value={availableUntil} onChange={(e) => setAvailableUntil(e.target.value)} /></label>
+          {error ? <p className="form-error">{error}</p> : null}
+          {message ? <p className="success-text">{message}</p> : null}
+          <button type="submit"><CheckCircle2 size={16} />Assign typing test</button>
+        </form>
+      </section>
+      <section className="panel compact-panel">
+        <h3>Typing Assignments</h3>
+        <DataTable rows={assignments} emptyTitle="No typing tests assigned yet" columns={[
+          { key: "title", label: "Test" },
+          { key: "grade", label: "Grade" },
+          { key: "learner_count", label: "Learners" },
+          { key: "available_until", label: "Available until", render: (row) => row.available_until ? formatDate(row.available_until) : "Open" }
+        ]} />
+      </section>
+      <section className="panel compact-panel">
+        <h3>Typing Performance</h3>
+        <DataTable rows={performance} emptyTitle="No typing attempts yet" columns={[
+          { key: "test_title", label: "Test", render: (row) => row.test_title || "Untitled test" },
+          { key: "attempts", label: "Attempts" },
+          { key: "best_wpm", label: "Best WPM", render: (row) => row.best_wpm ? Number(row.best_wpm).toFixed(1) : "-" },
+          { key: "average_accuracy", label: "Avg accuracy", render: (row) => row.average_accuracy ? `${Number(row.average_accuracy).toFixed(1)}%` : "-" }
         ]} />
       </section>
     </div>
@@ -389,6 +526,8 @@ function buildReportHtml(detail) {
   const report = detail.report || {};
   const learner = report.learner || detail.learner;
   const term = report.term || detail.selected_term;
+  const school = report.school || detail.school || {};
+  const logo = school.logo_url ? assetUrl(school.logo_url) : "";
   const courseRows = (report.courses || []).map((course) => `<tr><td>${escapeHtml(course.course_name)}</td><td>${escapeHtml(course.status)}</td><td>${escapeHtml(course.term_name)}</td></tr>`).join("");
   const quizRows = (detail.quiz_results || []).map((quiz) => `<tr><td>${escapeHtml(quiz.quiz_title || "Untitled quiz")}</td><td>${escapeHtml(quiz.score)}</td><td>${escapeHtml(quiz.created_at ? new Date(quiz.created_at).toLocaleDateString() : "")}</td></tr>`).join("");
   const typingRows = (detail.typing_results || []).map((typing) => `<tr><td>${escapeHtml(typing.wpm)}</td><td>${escapeHtml(typing.accuracy)}</td><td>${escapeHtml(typing.created_at ? new Date(typing.created_at).toLocaleDateString() : "")}</td></tr>`).join("");
@@ -402,6 +541,8 @@ function buildReportHtml(detail) {
   <style>
     body { font-family: Arial, sans-serif; color: #102033; margin: 32px; }
     h1, h2 { margin-bottom: 6px; }
+    .report-header { display: flex; align-items: center; gap: 16px; margin-bottom: 20px; }
+    .report-logo { width: 72px; height: 72px; object-fit: contain; border: 1px solid #d8e1ef; border-radius: 10px; }
     table { width: 100%; border-collapse: collapse; margin: 12px 0 24px; }
     th, td { border: 1px solid #d8e1ef; padding: 8px; text-align: left; }
     th { background: #eef4ff; }
@@ -409,9 +550,15 @@ function buildReportHtml(detail) {
   </style>
 </head>
 <body>
-  <h1>${escapeHtml(learner.full_name)}</h1>
-  <p class="meta">Username: ${escapeHtml(learner.username)} | Grade ${escapeHtml(learner.grade)}${learner.stream ? ` | ${escapeHtml(learner.stream)}` : ""}</p>
-  <p class="meta">Term: ${term ? `${escapeHtml(term.year)} ${escapeHtml(term.name)}` : "No selected term"}</p>
+  <div class="report-header">
+    ${logo ? `<img class="report-logo" src="${escapeHtml(logo)}" alt="${escapeHtml(school.name || "School")} logo" />` : ""}
+    <div>
+      <h1>${escapeHtml(learner.full_name)}</h1>
+      <p class="meta">${escapeHtml(school.name || "")}</p>
+      <p class="meta">Username: ${escapeHtml(learner.username)} | Grade ${escapeHtml(learner.grade)}${learner.stream ? ` | ${escapeHtml(learner.stream)}` : ""}</p>
+      <p class="meta">Term: ${term ? `${escapeHtml(term.year)} ${escapeHtml(term.name)}` : "No selected term"}</p>
+    </div>
+  </div>
   <h2>Course Report</h2>
   <table><thead><tr><th>Course</th><th>Status</th><th>Term</th></tr></thead><tbody>${courseRows || "<tr><td colspan=\"3\">No course records for this term.</td></tr>"}</tbody></table>
   <h2>Quiz Performance</h2>
@@ -447,7 +594,8 @@ function LearnerDetailPanel({ detail, streams, terms, onClose, onSaved, onTermCh
     stream: detail.learner.stream || "",
     parent_name: detail.learner.parent_name || "",
     parent_email: detail.learner.parent_email || "",
-    parent_phone: detail.learner.parent_phone || ""
+    parent_phone: detail.learner.parent_phone || "",
+    is_active: Boolean(detail.learner.is_active)
   });
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
@@ -469,6 +617,19 @@ function LearnerDetailPanel({ detail, streams, terms, onClose, onSaved, onTermCh
     try {
       const result = await api.post(`/school-admin/learners/${detail.learner.id}/promotions`, { mode, stream: form.stream || null });
       setMessage(mode === "next_grade" ? `${result.full_name} moved to Grade ${result.grade}.` : `${result.full_name} marked ready for the next term.`);
+      onSaved(detail.learner.id);
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function setActive(active) {
+    setError("");
+    setMessage("");
+    try {
+      await api.patch(`/school-admin/learners/${detail.learner.id}/status`, { is_active: active });
+      setForm((current) => ({ ...current, is_active: active }));
+      setMessage(active ? "Learner account reactivated." : "Learner account deactivated.");
       onSaved(detail.learner.id);
     } catch (err) {
       setError(err.message);
@@ -502,6 +663,7 @@ function LearnerDetailPanel({ detail, streams, terms, onClose, onSaved, onTermCh
         <label>Parent name<input value={form.parent_name} onChange={(e) => setForm({ ...form, parent_name: e.target.value })} /></label>
         <label>Parent email<input type="email" value={form.parent_email} onChange={(e) => setForm({ ...form, parent_email: e.target.value })} /></label>
         <label>Parent phone<input value={form.parent_phone} onChange={(e) => setForm({ ...form, parent_phone: e.target.value })} /></label>
+        <label className="check-row"><input type="checkbox" checked={form.is_active} onChange={(e) => setForm({ ...form, is_active: e.target.checked })} />Learner account active</label>
         {error ? <p className="form-error">{error}</p> : null}
         {message ? <p className="success-text">{message}</p> : null}
         <button type="submit"><CheckCircle2 size={16} />Save learner</button>
@@ -512,6 +674,11 @@ function LearnerDetailPanel({ detail, streams, terms, onClose, onSaved, onTermCh
           <p>Use next term when the learner continues in the same grade. Use next grade after the academic year is complete.</p>
         </div>
         <div className="promotion-actions">
+          {detail.learner.is_active ? (
+            <button type="button" className="secondary-button" onClick={() => setActive(false)}>Deactivate account</button>
+          ) : (
+            <button type="button" className="secondary-button" onClick={() => setActive(true)}>Reactivate account</button>
+          )}
           <button type="button" className="secondary-button" onClick={() => promote("next_term")}>Promote to next term</button>
           <button type="button" onClick={() => promote("next_grade")}><CheckCircle2 size={16} />Promote to next grade</button>
         </div>
@@ -611,7 +778,11 @@ export default function SchoolAdminDashboard() {
     globalQuizzes: [],
     schoolQuizzes: [],
     quizAssignments: [],
-    quizPerformance: []
+    quizPerformance: [],
+    globalTypingTests: [],
+    schoolTypingTests: [],
+    typingAssignments: [],
+    typingPerformance: []
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -644,7 +815,11 @@ export default function SchoolAdminDashboard() {
         globalQuizzes: api.get("/school-admin/global-quizzes"),
         schoolQuizzes: api.get("/school-admin/school-quizzes"),
         quizAssignments: api.get("/school-admin/quiz-assignments"),
-        quizPerformance: api.get("/school-admin/quiz-performance")
+        quizPerformance: api.get("/school-admin/quiz-performance"),
+        globalTypingTests: api.get("/school-admin/typing/global-tests"),
+        schoolTypingTests: api.get("/school-admin/typing/school-tests"),
+        typingAssignments: api.get("/school-admin/typing/assignments"),
+        typingPerformance: api.get("/school-admin/typing/performance")
       };
       const entries = await Promise.all(Object.entries(requests).map(async ([key, promise]) => {
         try {
@@ -675,7 +850,11 @@ export default function SchoolAdminDashboard() {
         globalQuizzes: data.globalQuizzes || [],
         schoolQuizzes: data.schoolQuizzes || [],
         quizAssignments: data.quizAssignments || [],
-        quizPerformance: data.quizPerformance || []
+        quizPerformance: data.quizPerformance || [],
+        globalTypingTests: data.globalTypingTests || [],
+        schoolTypingTests: data.schoolTypingTests || [],
+        typingAssignments: data.typingAssignments || [],
+        typingPerformance: data.typingPerformance || []
       });
     } catch (err) {
       setError(err.message);
@@ -742,10 +921,13 @@ export default function SchoolAdminDashboard() {
 
       <section className="school-main">
         <header className="school-hero">
-          <div>
-            <p className="eyebrow">Active term: {activeTermLabel}</p>
-            <h1>{state.profile?.school_name || "Your school"} learning studio</h1>
-            <p>Guide learners, review work, track typing growth, manage streams, and keep report cards moving with quiet confidence.</p>
+          <div className="school-hero-title">
+            {state.profile?.logo_url ? <img className="school-logo-md" src={assetUrl(state.profile.logo_url)} alt={`${state.profile.school_name} logo`} /> : null}
+            <div>
+              <p className="eyebrow">Active term: {activeTermLabel}</p>
+              <h1>{state.profile?.school_name || "Your school"} learning studio</h1>
+              <p>Guide learners, review work, track typing growth, manage streams, and keep report cards moving with quiet confidence.</p>
+            </div>
           </div>
           <div className="last-login-card">
             <Bell size={20} />
@@ -840,14 +1022,18 @@ export default function SchoolAdminDashboard() {
         )}
 
         {!loading && activeTab === "typing" && (
-          <section className="panel">
-            <h2>Typing Test Results</h2>
-            <DataTable rows={state.typing} emptyTitle="No typing results yet" columns={[
-              { key: "learner_name", label: "Learner" },
-              { key: "wpm", label: "WPM" },
-              { key: "accuracy", label: "Accuracy", render: (row) => `${Number(row.accuracy || 0).toFixed(1)}%` },
-              { key: "created_at", label: "Date", render: (row) => formatDate(row.created_at) }
-            ]} />
+          <section className="school-section">
+            <TypingTestPanel globalTests={state.globalTypingTests} schoolTests={state.schoolTypingTests} assignments={state.typingAssignments} performance={state.typingPerformance} onRefresh={loadDashboard} />
+            <section className="panel">
+              <h2>Typing Test Results</h2>
+              <DataTable rows={state.typing} emptyTitle="No typing results yet" columns={[
+                { key: "test_title", label: "Test", render: (row) => row.test_title || "Typing test" },
+                { key: "learner_name", label: "Learner" },
+                { key: "wpm", label: "WPM" },
+                { key: "accuracy", label: "Accuracy", render: (row) => `${Number(row.accuracy || 0).toFixed(1)}%` },
+                { key: "created_at", label: "Date", render: (row) => formatDate(row.created_at) }
+              ]} />
+            </section>
           </section>
         )}
 

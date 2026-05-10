@@ -21,9 +21,17 @@ const quizForTaking = wrap(async (req, res) => {
 const submitQuizAttempt = wrap(async (req, res) => {
   res.status(201).json(await service.submitQuizAttempt(req.user, req.params.id, req.body));
 });
+const typingTestForTaking = wrap(async (req, res) => {
+  res.json(await service.typingTestForTaking(req.user, req.params.id));
+});
+const submitTypingAttempt = wrap(async (req, res) => {
+  res.status(201).json(await service.submitTypingAttempt(req.user, req.params.id, req.body));
+});
 
 module.exports = {
   dashboard,
   quizForTaking,
-  submitQuizAttempt
+  submitQuizAttempt,
+  typingTestForTaking,
+  submitTypingAttempt
 };
