@@ -598,6 +598,34 @@ as $$
   order by s.name;
 $$;
 
+-- ---------------------------------------------------------------------------
+-- Course builder (modules / lessons already exist; activity blocks + metadata)
+-- ---------------------------------------------------------------------------
+alter table courses add column if not exists short_description text;
+alter table courses add column if not exists cover_image_url text;
+alter table courses add column if not exists target_level text;
+alter table courses add column if not exists technology text;
+alter table modules add column if not exists icon_url text;
+alter table modules add column if not exists total_marks numeric(6,2) not null default 100;
+alter table lessons add column if not exists lesson_objectives text;
+alter table lessons add column if not exists total_marks numeric(6,2) not null default 100;
+alter table lesson_progress add column if not exists activity_progress jsonb not null default '{}'::jsonb;
+alter table lesson_progress add column if not exists score_breakdown jsonb not null default '{}'::jsonb;
+
+create table if not exists lesson_activity_blocks (
+  id uuid primary key default gen_random_uuid(),
+  lesson_id uuid not null references lessons(id) on delete cascade,
+  activity_type text not null,
+  sort_order integer not null default 1,
+  marks_weight numeric(6,2) not null default 0,
+  payload jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists lesson_activity_blocks_lesson_order_idx on lesson_activity_blocks (lesson_id, sort_order);
+alter table lesson_activity_blocks enable row level security;
+
 revoke all on schema public from public;
 grant usage on schema public to postgres;
 

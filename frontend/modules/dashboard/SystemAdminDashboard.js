@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   BarChart3,
@@ -10,6 +10,7 @@ import {
   ClipboardList,
   ExternalLink,
   GraduationCap,
+  Layers,
   LogOut,
   PanelLeftClose,
   PanelLeftOpen,
@@ -23,6 +24,9 @@ import {
 } from "lucide-react";
 import { api, assetUrl } from "../../lib/api";
 import { currentUser, logout } from "../../lib/auth";
+import CourseBuilderPanel from "./CourseBuilderPanel";
+
+const SIDEBAR_HIDE_DELAY_MS = 420;
 
 const tabs = [
   { id: "overview", label: "Overview", icon: Activity },
@@ -30,6 +34,7 @@ const tabs = [
   { id: "schools", label: "Schools", icon: Building2 },
   { id: "users", label: "Users", icon: Users },
   { id: "courses", label: "Courses", icon: BookOpen },
+  { id: "course-builder", label: "Course builder", icon: Layers },
   { id: "quiz", label: "Quiz Pool", icon: ClipboardList },
   { id: "leaderboards", label: "Leaderboards", icon: GraduationCap },
   { id: "audit", label: "Audit", icon: Shield }
@@ -54,7 +59,7 @@ function MetricCard({ label, value, detail }) {
   );
 }
 
-function DataTable({ columns, rows, emptyTitle }) {
+function DataTable({ columns, rows, emptyTitle, wrapClassName }) {
   if (!rows?.length) {
     return <EmptyState title={emptyTitle} detail="No records exist yet. When real data is created, it will appear here." />;
   }
@@ -63,7 +68,7 @@ function DataTable({ columns, rows, emptyTitle }) {
   };
 
   return (
-    <div className="table-wrap">
+    <div className={`table-wrap${wrapClassName ? ` ${wrapClassName}` : ""}`}>
       <table>
         <thead>
           <tr>{columns.map((column) => <th key={column.key}>{column.label}</th>)}</tr>
@@ -636,11 +641,29 @@ function SchoolDetailPanel({ detail, onClose, onChanged }) {
   );
 }
 
+function userMatchesFilters(row, filters) {
+  const isActive = Boolean(row.is_active);
+  if (filters.role && row.role !== filters.role) return false;
+  if (filters.school_id && String(row.school_id || "") !== filters.school_id) return false;
+  if (filters.status === "active" && (row.deleted_at || !isActive)) return false;
+  if (filters.status === "inactive" && (row.deleted_at || isActive)) return false;
+  if (filters.status === "closed" && !row.deleted_at) return false;
+  if (filters.search) {
+    const q = filters.search.trim().toLowerCase();
+    const hay = [row.full_name, row.email, row.username, row.school_name].filter(Boolean).join(" ").toLowerCase();
+    if (!hay.includes(q)) return false;
+  }
+  return true;
+}
+
 function UserManagementPanel({ users, schools, onChanged }) {
   const [selected, setSelected] = useState(null);
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [userFilters, setUserFilters] = useState({ search: "", role: "", school_id: "", status: "" });
+
+  const filteredUsers = useMemo(() => (users || []).filter((row) => userMatchesFilters(row, userFilters)), [users, userFilters]);
 
   function openUser(user) {
     setSelected({
@@ -718,7 +741,14 @@ function UserManagementPanel({ users, schools, onChanged }) {
     <div className="user-management-grid">
       <section className="panel compact-panel">
         <h3>System Users</h3>
-        <DataTable rows={users} emptyTitle="No users yet" columns={[
+        <p className="system-users-count">Showing {filteredUsers.length} of {users?.length ?? 0} users</p>
+        <form className="inline-form system-users-filters" onSubmit={(event) => event.preventDefault()}>
+          <label>Search<input value={userFilters.search} onChange={(e) => setUserFilters({ ...userFilters, search: e.target.value })} placeholder="Name, email, username, school" /></label>
+          <label>Role<select value={userFilters.role} onChange={(e) => setUserFilters({ ...userFilters, role: e.target.value })}><option value="">All roles</option><option value="system_admin">System Admin</option><option value="school_admin">School Admin</option><option value="student">Learner</option></select></label>
+          <label>School<select value={userFilters.school_id} onChange={(e) => setUserFilters({ ...userFilters, school_id: e.target.value })}><option value="">All schools</option>{schools.map((school) => <option key={school.id} value={String(school.id)}>{school.name}</option>)}</select></label>
+          <label>Status<select value={userFilters.status} onChange={(e) => setUserFilters({ ...userFilters, status: e.target.value })}><option value="">Any status</option><option value="active">Active</option><option value="inactive">Inactive</option><option value="closed">Closed</option></select></label>
+        </form>
+        <DataTable rows={filteredUsers} emptyTitle={users?.length ? "No users match these filters" : "No users yet"} wrapClassName="table-scroll-10" columns={[
           { key: "full_name", label: "Name", render: (row) => <button type="button" className="link-button" onClick={() => openUser(row)}>{row.full_name}</button> },
           { key: "role", label: "Role" },
           { key: "school_name", label: "School", render: (row) => row.school_name || "-" },
@@ -808,7 +838,9 @@ function AuditPanel({ initialRows, schools }) {
 
 export default function SystemAdminDashboard() {
   const [activeTab, setActiveTab] = useState("overview");
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const sidebarOpenRef = useRef(false);
+  const hideSidebarTimerRef = useRef(null);
   const [user, setUser] = useState(null);
   const [data, setData] = useState({
     summary: null,
@@ -828,6 +860,7 @@ export default function SystemAdminDashboard() {
   const [loading, setLoading] = useState(true);
   const [selectedSchool, setSelectedSchool] = useState(null);
   const [schoolDetail, setSchoolDetail] = useState(null);
+  const [coursesNavOpen, setCoursesNavOpen] = useState(false);
 
   const metricCards = useMemo(() => {
     const totals = data.summary?.totals || {};
@@ -839,6 +872,16 @@ export default function SystemAdminDashboard() {
     ];
   }, [data.summary]);
   const activeCourse = useMemo(() => data.courses.find((course) => activeTab === `course:${course.id}`), [activeTab, data.courses]);
+  const sortedCourses = useMemo(
+    () => [...data.courses].sort((a, b) => (a.name || "").localeCompare(b.name || "", undefined, { sensitivity: "base" })),
+    [data.courses]
+  );
+
+  useEffect(() => {
+    if (activeTab !== "courses" && !String(activeTab).startsWith("course:")) {
+      setCoursesNavOpen(false);
+    }
+  }, [activeTab]);
 
   async function loadDashboard() {
     setLoading(true);
@@ -914,6 +957,46 @@ export default function SystemAdminDashboard() {
   }
 
   useEffect(() => {
+    sidebarOpenRef.current = sidebarOpen;
+  }, [sidebarOpen]);
+
+  const clearHideSidebarTimer = useCallback(() => {
+    if (hideSidebarTimerRef.current) {
+      clearTimeout(hideSidebarTimerRef.current);
+      hideSidebarTimerRef.current = null;
+    }
+  }, []);
+
+  const scheduleHideSidebar = useCallback(() => {
+    clearHideSidebarTimer();
+    if (!sidebarOpenRef.current) return;
+    hideSidebarTimerRef.current = setTimeout(() => {
+      hideSidebarTimerRef.current = null;
+      if (sidebarOpenRef.current) {
+        setSidebarOpen(false);
+      }
+    }, SIDEBAR_HIDE_DELAY_MS);
+  }, [clearHideSidebarTimer]);
+
+  function onSidebarPointerEnter() {
+    clearHideSidebarTimer();
+    setSidebarOpen(true);
+  }
+
+  function onSidebarPointerLeave() {
+    scheduleHideSidebar();
+  }
+
+  function toggleSidebar() {
+    clearHideSidebarTimer();
+    setSidebarOpen((open) => !open);
+  }
+
+  useEffect(() => {
+    return () => clearHideSidebarTimer();
+  }, [clearHideSidebarTimer]);
+
+  useEffect(() => {
     const sessionUser = currentUser();
     if (!sessionUser) {
       window.location.href = "/login";
@@ -935,7 +1018,7 @@ export default function SystemAdminDashboard() {
 
   return (
     <main className={`admin-shell ${sidebarOpen ? "" : "sidebar-collapsed"}`}>
-      <aside className="admin-sidebar">
+      <aside className="admin-sidebar" onPointerEnter={onSidebarPointerEnter} onPointerLeave={onSidebarPointerLeave}>
         <div className="brand-block">
           <BarChart3 size={28} />
           <div>
@@ -943,27 +1026,45 @@ export default function SystemAdminDashboard() {
             <span>System Admin</span>
           </div>
         </div>
-        <button type="button" className="sidebar-toggle" onClick={() => setSidebarOpen((open) => !open)} title={sidebarOpen ? "Hide sidebar" : "Show sidebar"}>
+        <button type="button" className="sidebar-toggle" onClick={toggleSidebar} title={sidebarOpen ? "Hide sidebar" : "Show sidebar"}>
           {sidebarOpen ? <PanelLeftClose size={18} /> : <PanelLeftOpen size={18} />}
           <span>{sidebarOpen ? "Hide" : "Show"}</span>
         </button>
         <nav>
           {tabs.map((tab) => {
             const Icon = tab.icon;
+            const isCourses = tab.id === "courses";
+            const courseSectionActive = isCourses && (activeTab === "courses" || String(activeTab).startsWith("course:"));
+            const tabButtonActive = isCourses ? courseSectionActive : activeTab === tab.id;
             return (
               <div key={tab.id} className="nav-group">
-                <button className={activeTab === tab.id ? "active" : ""} onClick={() => setActiveTab(tab.id)}>
+                <button
+                  type="button"
+                  className={tabButtonActive ? "active" : ""}
+                  onClick={() => {
+                    if (isCourses) {
+                      if (courseSectionActive) {
+                        setCoursesNavOpen((open) => !open);
+                      } else {
+                        setActiveTab("courses");
+                        setCoursesNavOpen(true);
+                      }
+                    } else {
+                      setActiveTab(tab.id);
+                    }
+                  }}
+                >
                   <Icon size={18} /><span>{tab.label}</span>
                 </button>
-              {tab.id === "courses" && sidebarOpen ? (
-                <div className="course-subnav">
-                  {data.courses.map((course) => (
-                    <button key={course.id} type="button" className={activeTab === `course:${course.id}` ? "active" : ""} onClick={() => setActiveTab(`course:${course.id}`)}>
-                      <span>{course.name}</span>
-                    </button>
-                  ))}
-                </div>
-              ) : null}
+                {isCourses && sidebarOpen && coursesNavOpen ? (
+                  <div className="course-subnav course-subnav-dropdown">
+                    {sortedCourses.map((course) => (
+                      <button key={course.id} type="button" className={activeTab === `course:${course.id}` ? "active" : ""} onClick={() => setActiveTab(`course:${course.id}`)}>
+                        <span>{course.name}</span>
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
               </div>
             );
           })}
@@ -1095,6 +1196,19 @@ export default function SystemAdminDashboard() {
               { key: "score", label: "Score" },
               { key: "school", label: "School", render: (row) => row.schools?.name || "-" }
             ]} />
+          </section>
+        )}
+
+        {!loading && activeTab === "course-builder" && (
+          <section className="dashboard-section">
+            <section className="panel">
+              <h2>Drag-and-Drop Course Builder</h2>
+              <p className="header-copy" style={{ marginBottom: 16 }}>
+                Pick a seeded catalogue course, then shape modules, lessons, and reusable activity blocks. Aim for 100 marks per lesson across activities.
+                Grading bands: 0–50 approaching expectations, 51–80 meets expectations, 81–100 exceeds expectations.
+              </p>
+              <CourseBuilderPanel courses={data.courses} onPublished={loadDashboard} />
+            </section>
           </section>
         )}
 

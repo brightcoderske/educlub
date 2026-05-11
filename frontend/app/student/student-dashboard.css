@@ -7,6 +7,13 @@
     radial-gradient(circle at 15% 20%, rgba(31, 157, 114, 0.22), transparent 25%),
     linear-gradient(180deg, #f6fbff 0%, #f7fff9 100%);
   color: #172033;
+  transition: grid-template-columns 0.22s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .student-shell {
+    transition: none;
+  }
 }
 
 .student-sidebar {
@@ -17,6 +24,13 @@
   background: #17324d;
   color: #fff;
   box-shadow: 8px 0 22px rgba(23, 50, 77, 0.12);
+  transition: padding-inline 0.22s ease, box-shadow 0.22s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .student-sidebar {
+    transition: none;
+  }
 }
 
 .student-brand {
@@ -106,6 +120,7 @@
 }
 
 .student-hero {
+  --hero-side: 8.5rem;
   min-height: 230px;
   padding: 32px;
   border-radius: 28px;
@@ -140,8 +155,9 @@
 }
 
 .student-school-logo {
-  width: 82px;
-  height: 82px;
+  width: var(--hero-side);
+  height: var(--hero-side);
+  box-sizing: border-box;
   object-fit: contain;
   border-radius: 20px;
   background: rgba(255, 255, 255, 0.86);
@@ -152,12 +168,15 @@
 
 .student-level-card {
   width: min(210px, 100%);
+  min-height: var(--hero-side);
+  box-sizing: border-box;
   padding: 18px;
   border-radius: 22px;
   background: rgba(255, 255, 255, 0.76);
   border: 1px solid rgba(255, 255, 255, 0.86);
   display: grid;
   gap: 6px;
+  align-content: center;
   box-shadow: 0 14px 36px rgba(18, 50, 74, 0.12);
 }
 

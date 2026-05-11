@@ -6,6 +6,13 @@
     radial-gradient(circle at 88% 4%, rgba(245, 184, 51, 0.22), transparent 20%),
     linear-gradient(180deg, #f7fbff 0%, #f3f8f4 100%);
   color: #172033;
+  transition: grid-template-columns 0.22s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .admin-shell {
+    transition: none;
+  }
 }
 
 .admin-sidebar {
@@ -16,6 +23,13 @@
   flex-direction: column;
   gap: 24px;
   box-shadow: 16px 0 44px rgba(20, 48, 70, 0.16);
+  transition: padding-inline 0.22s ease, box-shadow 0.22s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .admin-sidebar {
+    transition: none;
+  }
 }
 
 .brand-block {
@@ -57,6 +71,22 @@
   min-height: 34px;
   font-size: 0.86rem;
   color: #dce5f2;
+}
+
+.course-subnav.course-subnav-dropdown {
+  padding-left: 8px;
+  padding-right: 4px;
+}
+
+.course-subnav.course-subnav-dropdown button {
+  justify-content: flex-end;
+  text-align: right;
+}
+
+.course-subnav.course-subnav-dropdown button span {
+  display: block;
+  width: 100%;
+  text-align: right;
 }
 
 .admin-sidebar button,
@@ -526,6 +556,16 @@ button:disabled {
   gap: 18px;
 }
 
+.system-users-count {
+  margin: -6px 0 0;
+  font-size: 0.86rem;
+  color: #5c6d80;
+}
+
+.system-users-filters {
+  margin-top: 2px;
+}
+
 .user-action-row {
   flex-wrap: wrap;
 }
@@ -563,6 +603,28 @@ button:disabled {
 
 .table-wrap {
   overflow-x: auto;
+}
+
+.table-wrap.table-scroll-10 {
+  max-height: calc(2.75rem + 10 * 2.85rem);
+  overflow: auto;
+  border: 1px solid #e1e7f0;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.table-wrap.table-scroll-10 thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #fff;
+  box-shadow: 0 1px 0 #e1e7f0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .table-wrap.table-scroll-10 thead th {
+    box-shadow: none;
+  }
 }
 
 table {

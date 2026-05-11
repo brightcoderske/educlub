@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   BarChart3,
   Bell,
@@ -813,9 +813,13 @@ function PreferencesPanel({ preferences, streams, onRefresh }) {
   );
 }
 
+const SIDEBAR_HIDE_DELAY_MS = 420;
+
 export default function SchoolAdminDashboard() {
   const [activeTab, setActiveTab] = useState("overview");
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const sidebarOpenRef = useRef(false);
+  const hideSidebarTimerRef = useRef(null);
   const [user, setUser] = useState(null);
   const [state, setState] = useState({
     profile: null,
@@ -846,12 +850,23 @@ export default function SchoolAdminDashboard() {
   const [learnerFilters, setLearnerFilters] = useState({ search: "", grade: "", stream: "" });
   const [learnerDetail, setLearnerDetail] = useState(null);
   const [showReportCard, setShowReportCard] = useState(false);
+  const [coursesNavOpen, setCoursesNavOpen] = useState(false);
 
   const activeTermLabel = useMemo(() => {
     const term = state.summary?.active_term;
     return term ? `${term.year} - ${term.name}` : "No active term";
   }, [state.summary]);
   const activeCourse = useMemo(() => state.courses.find((course) => activeTab === `course:${course.id}`), [activeTab, state.courses]);
+  const sortedCourses = useMemo(
+    () => [...state.courses].sort((a, b) => (a.name || "").localeCompare(b.name || "", undefined, { sensitivity: "base" })),
+    [state.courses]
+  );
+
+  useEffect(() => {
+    if (activeTab !== "courses" && !String(activeTab).startsWith("course:")) {
+      setCoursesNavOpen(false);
+    }
+  }, [activeTab]);
 
   async function loadDashboard() {
     setLoading(true);
@@ -964,6 +979,46 @@ export default function SchoolAdminDashboard() {
   }
 
   useEffect(() => {
+    sidebarOpenRef.current = sidebarOpen;
+  }, [sidebarOpen]);
+
+  const clearHideSidebarTimer = useCallback(() => {
+    if (hideSidebarTimerRef.current) {
+      clearTimeout(hideSidebarTimerRef.current);
+      hideSidebarTimerRef.current = null;
+    }
+  }, []);
+
+  const scheduleHideSidebar = useCallback(() => {
+    clearHideSidebarTimer();
+    if (!sidebarOpenRef.current) return;
+    hideSidebarTimerRef.current = setTimeout(() => {
+      hideSidebarTimerRef.current = null;
+      if (sidebarOpenRef.current) {
+        setSidebarOpen(false);
+      }
+    }, SIDEBAR_HIDE_DELAY_MS);
+  }, [clearHideSidebarTimer]);
+
+  function onSidebarPointerEnter() {
+    clearHideSidebarTimer();
+    setSidebarOpen(true);
+  }
+
+  function onSidebarPointerLeave() {
+    scheduleHideSidebar();
+  }
+
+  function toggleSidebar() {
+    clearHideSidebarTimer();
+    setSidebarOpen((open) => !open);
+  }
+
+  useEffect(() => {
+    return () => clearHideSidebarTimer();
+  }, [clearHideSidebarTimer]);
+
+  useEffect(() => {
     const sessionUser = currentUser();
     if (!sessionUser || sessionUser.role !== "school_admin") {
       window.location.href = "/login";
@@ -975,7 +1030,11 @@ export default function SchoolAdminDashboard() {
 
   return (
     <main className={`school-shell ${sidebarOpen ? "" : "sidebar-collapsed"}`}>
-      <aside className="school-sidebar">
+      <aside
+        className="school-sidebar"
+        onPointerEnter={onSidebarPointerEnter}
+        onPointerLeave={onSidebarPointerLeave}
+      >
         <div className="school-brand">
           <Sparkles size={28} />
           <div>
@@ -983,19 +1042,39 @@ export default function SchoolAdminDashboard() {
             <span>School Admin</span>
           </div>
         </div>
-        <button type="button" className="sidebar-toggle" onClick={() => setSidebarOpen((open) => !open)} title={sidebarOpen ? "Hide sidebar" : "Show sidebar"}>
+        <button type="button" className="sidebar-toggle" onClick={toggleSidebar} title={sidebarOpen ? "Hide sidebar" : "Show sidebar"}>
           {sidebarOpen ? <PanelLeftClose size={18} /> : <PanelLeftOpen size={18} />}
           <span>{sidebarOpen ? "Hide" : "Show"}</span>
         </button>
         <nav>
           {tabs.map((tab) => {
             const Icon = tab.icon;
+            const isCourses = tab.id === "courses";
+            const courseSectionActive = isCourses && (activeTab === "courses" || String(activeTab).startsWith("course:"));
+            const tabButtonActive = isCourses ? courseSectionActive : activeTab === tab.id;
             return (
               <div key={tab.id} className="nav-group">
-                <button className={activeTab === tab.id ? "active" : ""} onClick={() => setActiveTab(tab.id)}><Icon size={18} /><span>{tab.label}</span></button>
-                {tab.id === "courses" && sidebarOpen ? (
-                  <div className="course-subnav">
-                    {state.courses.map((course) => (
+                <button
+                  type="button"
+                  className={tabButtonActive ? "active" : ""}
+                  onClick={() => {
+                    if (isCourses) {
+                      if (courseSectionActive) {
+                        setCoursesNavOpen((open) => !open);
+                      } else {
+                        setActiveTab("courses");
+                        setCoursesNavOpen(true);
+                      }
+                    } else {
+                      setActiveTab(tab.id);
+                    }
+                  }}
+                >
+                  <Icon size={18} /><span>{tab.label}</span>
+                </button>
+                {isCourses && sidebarOpen && coursesNavOpen ? (
+                  <div className="course-subnav course-subnav-dropdown">
+                    {sortedCourses.map((course) => (
                       <button key={course.id} type="button" className={activeTab === `course:${course.id}` ? "active" : ""} onClick={() => setActiveTab(`course:${course.id}`)}>
                         <span>{course.name}</span>
                       </button>

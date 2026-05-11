@@ -4,6 +4,13 @@
   grid-template-columns: 64px minmax(0, 1fr);
   background: #f6f8fb;
   color: #182638;
+  transition: grid-template-columns 0.22s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .school-shell {
+    transition: none;
+  }
 }
 
 .school-sidebar {
@@ -14,6 +21,13 @@
   flex-direction: column;
   gap: 12px;
   box-shadow: 8px 0 22px rgba(23, 50, 77, 0.12);
+  transition: padding-inline 0.22s ease, box-shadow 0.22s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .school-sidebar {
+    transition: none;
+  }
 }
 
 .school-brand {
@@ -55,6 +69,22 @@
   min-height: 34px;
   font-size: 0.86rem;
   color: #d6efe6;
+}
+
+.school-sidebar .course-subnav.course-subnav-dropdown {
+  padding-left: 8px;
+  padding-right: 4px;
+}
+
+.school-sidebar .course-subnav.course-subnav-dropdown button {
+  justify-content: flex-end;
+  text-align: right;
+}
+
+.school-sidebar .course-subnav.course-subnav-dropdown button span {
+  display: block;
+  width: 100%;
+  text-align: right;
 }
 
 .school-sidebar button {
@@ -120,6 +150,7 @@
 }
 
 .school-hero {
+  --hero-side: 7.75rem;
   min-height: 132px;
   padding: 20px;
   border-radius: 12px;
@@ -155,8 +186,9 @@
 }
 
 .school-logo-md {
-  width: 58px;
-  height: 58px;
+  width: var(--hero-side);
+  height: var(--hero-side);
+  box-sizing: border-box;
   object-fit: contain;
   border-radius: 10px;
   background: rgba(255,255,255,0.88);
@@ -167,12 +199,15 @@
 
 .last-login-card {
   width: min(220px, 100%);
+  min-height: var(--hero-side);
+  box-sizing: border-box;
   padding: 12px;
   border-radius: 10px;
   background: #f8fbff;
   border: 1px solid #dfe8f2;
   display: grid;
   gap: 8px;
+  align-content: center;
   box-shadow: 0 14px 36px rgba(18, 50, 74, 0.13);
 }
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Award,
   BarChart3,
@@ -19,6 +19,8 @@ import {
 import { api, assetUrl } from "../../lib/api";
 import { currentUser, logout } from "../../lib/auth";
 import "./student-dashboard.css";
+
+const SIDEBAR_HIDE_DELAY_MS = 420;
 
 const tabs = [
   { id: "overview", label: "Overview", icon: LayoutDashboard },
@@ -264,6 +266,8 @@ function WebCourseWorkspace({ course, selectedLesson, lessonDraft, setLessonDraf
 export default function StudentPage() {
   const [activeTab, setActiveTab] = useState("overview");
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const sidebarOpenRef = useRef(false);
+  const hideSidebarTimerRef = useRef(null);
   const [user, setUser] = useState(null);
   const [dashboard, setDashboard] = useState(null);
   const [activeQuiz, setActiveQuiz] = useState(null);
@@ -307,6 +311,46 @@ export default function StudentPage() {
     setUser(sessionUser);
     loadDashboard();
   }, [loadDashboard]);
+
+  useEffect(() => {
+    sidebarOpenRef.current = sidebarOpen;
+  }, [sidebarOpen]);
+
+  const clearHideSidebarTimer = useCallback(() => {
+    if (hideSidebarTimerRef.current) {
+      clearTimeout(hideSidebarTimerRef.current);
+      hideSidebarTimerRef.current = null;
+    }
+  }, []);
+
+  const scheduleHideSidebar = useCallback(() => {
+    clearHideSidebarTimer();
+    if (!sidebarOpenRef.current) return;
+    hideSidebarTimerRef.current = setTimeout(() => {
+      hideSidebarTimerRef.current = null;
+      if (sidebarOpenRef.current) {
+        setSidebarOpen(false);
+      }
+    }, SIDEBAR_HIDE_DELAY_MS);
+  }, [clearHideSidebarTimer]);
+
+  function onSidebarPointerEnter() {
+    clearHideSidebarTimer();
+    setSidebarOpen(true);
+  }
+
+  function onSidebarPointerLeave() {
+    scheduleHideSidebar();
+  }
+
+  function toggleSidebar() {
+    clearHideSidebarTimer();
+    setSidebarOpen((open) => !open);
+  }
+
+  useEffect(() => {
+    return () => clearHideSidebarTimer();
+  }, [clearHideSidebarTimer]);
 
   const summary = dashboard?.summary || {};
 
@@ -464,7 +508,7 @@ export default function StudentPage() {
 
   return (
     <main className={`student-shell ${sidebarOpen ? "" : "sidebar-collapsed"}`}>
-      <aside className="student-sidebar">
+      <aside className="student-sidebar" onPointerEnter={onSidebarPointerEnter} onPointerLeave={onSidebarPointerLeave}>
         <div className="student-brand">
           <Trophy size={28} />
           <div>
@@ -472,7 +516,7 @@ export default function StudentPage() {
             <span>Learner</span>
           </div>
         </div>
-        <button type="button" className="student-sidebar-toggle" onClick={() => setSidebarOpen((open) => !open)} title={sidebarOpen ? "Hide sidebar" : "Show sidebar"}>
+        <button type="button" className="student-sidebar-toggle" onClick={toggleSidebar} title={sidebarOpen ? "Hide sidebar" : "Show sidebar"}>
           {sidebarOpen ? <PanelLeftClose size={18} /> : <PanelLeftOpen size={18} />}
           <span>{sidebarOpen ? "Hide" : "Show"}</span>
         </button>
