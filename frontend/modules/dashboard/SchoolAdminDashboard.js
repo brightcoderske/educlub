@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import { api, assetUrl } from "../../lib/api";
 import { currentUser, logout } from "../../lib/auth";
+import ReportCard from "./ReportCard";
 
 const tabs = [
   { id: "overview", label: "Overview", icon: LayoutDashboard },
@@ -705,7 +706,8 @@ function LearnerDetailPanel({ detail, streams, terms, onClose, onSaved, onTermCh
               {terms.map((term) => <option key={term.id} value={term.id}>{term.year} - {term.name}{term.is_active ? " (active)" : ""}</option>)}
             </select>
           </label>
-          <button type="button" className="secondary-button" onClick={() => exportLearnerReport(detail)}><Download size={16} />Export report</button>
+          <button type="button" className="secondary-button" onClick={() => exportLearnerReport(detail)}><Download size={16} />Export HTML report</button>
+          <button type="button" className="secondary-button" onClick={() => setShowReportCard(true)}><Download size={16} />Print report card</button>
           <button type="button" className="secondary-button" onClick={onClose}>Close</button>
         </div>
       </div>
@@ -843,6 +845,7 @@ export default function SchoolAdminDashboard() {
   const [notice, setNotice] = useState("");
   const [learnerFilters, setLearnerFilters] = useState({ search: "", grade: "", stream: "" });
   const [learnerDetail, setLearnerDetail] = useState(null);
+  const [showReportCard, setShowReportCard] = useState(false);
 
   const activeTermLabel = useMemo(() => {
     const term = state.summary?.active_term;
@@ -1082,6 +1085,23 @@ export default function SchoolAdminDashboard() {
               { key: "parent_email", label: "Parent email", render: (row) => row.parent_email || "-" }
             ]} />
             {learnerDetail ? <LearnerDetailPanel detail={learnerDetail} streams={state.streams} terms={state.terms} onClose={() => setLearnerDetail(null)} onSaved={refreshLearnerDetail} onTermChange={openLearnerDetail} /> : null}
+            {showReportCard && (
+              <ReportCard
+                data={{
+                  school: { name: state.profile?.school_name || "School Name", logo_url: state.profile?.logo_url || "" },
+                  learner: learnerDetail?.learner || { full_name: "Learner", grade: "", stream: "", member_id: "", attendance: "" },
+                  term: learnerDetail?.selected_term || { year: "", name: "" },
+                  tutors: { lead: state.profile?.lead_tutor || "Tutor", assistant: state.profile?.assistant_tutor || "Assistant" },
+                  overall_performance: learnerDetail?.report?.overall_performance || "Meets Expectation",
+                  typing_weekly: learnerDetail?.typing_weekly || [],
+                  quiz_weekly: learnerDetail?.quiz_weekly || [],
+                  course: learnerDetail?.course || { name: "Web Development", modules: [] },
+                  teacher_feedback: learnerDetail?.report?.teacher_remarks || "No feedback yet.",
+                  generated_at: new Date().toLocaleDateString("en-US", { weekday: "short", year: "numeric", month: "short", day: "numeric" })
+                }}
+                onClose={() => setShowReportCard(false)}
+              />
+            )}
           </section>
         )}
 
