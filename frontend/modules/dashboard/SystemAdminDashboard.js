@@ -11,6 +11,8 @@ import {
   ExternalLink,
   GraduationCap,
   LogOut,
+  PanelLeftClose,
+  PanelLeftOpen,
   Pencil,
   Plus,
   RefreshCw,
@@ -396,7 +398,7 @@ function GlobalQuizManager({ quizzes, onChanged }) {
 }
 
 function GlobalTypingForm({ tests, onChanged }) {
-  const [form, setForm] = useState({ title: "", passage: "", duration_seconds: 300, grade_levels: [1] });
+  const [form, setForm] = useState({ title: "", passage: "", duration_seconds: 300, max_attempts: 3, grade_levels: [1] });
   const [error, setError] = useState("");
 
   async function submit(event) {
@@ -407,7 +409,7 @@ function GlobalTypingForm({ tests, onChanged }) {
         ...form,
         duration_seconds: Number(form.duration_seconds || 300)
       });
-      setForm({ title: "", passage: "", duration_seconds: 300, grade_levels: [1] });
+      setForm({ title: "", passage: "", duration_seconds: 300, max_attempts: 3, grade_levels: [1] });
       onChanged();
     } catch (err) {
       setError(err.message);
@@ -421,6 +423,7 @@ function GlobalTypingForm({ tests, onChanged }) {
         <label>Title<input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} required /></label>
         <label>Passage<textarea value={form.passage} onChange={(e) => setForm({ ...form, passage: e.target.value })} required /></label>
         <label>Duration seconds<input type="number" min="30" max="1800" value={form.duration_seconds} onChange={(e) => setForm({ ...form, duration_seconds: e.target.value })} /></label>
+        <label>Attempts allowed<input type="number" min="1" max="20" value={form.max_attempts} onChange={(e) => setForm({ ...form, max_attempts: e.target.value })} /></label>
         <GradeChecks value={form.grade_levels} onChange={(grades) => setForm({ ...form, grade_levels: grades })} />
         {error ? <p className="form-error">{error}</p> : null}
         <button type="submit"><Plus size={16} />Create global typing test</button>
@@ -429,6 +432,7 @@ function GlobalTypingForm({ tests, onChanged }) {
         { key: "title", label: "Test" },
         { key: "grade_levels", label: "Grades", render: (row) => row.grade_levels?.join(", ") || "-" },
         { key: "duration_seconds", label: "Seconds" },
+        { key: "max_attempts", label: "Attempts" },
         { key: "passage_preview", label: "Passage", render: (row) => row.passage_preview || "-" }
       ]} />
     </section>
@@ -804,6 +808,7 @@ function AuditPanel({ initialRows, schools }) {
 
 export default function SystemAdminDashboard() {
   const [activeTab, setActiveTab] = useState("overview");
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const [user, setUser] = useState(null);
   const [data, setData] = useState({
     summary: null,
@@ -833,6 +838,7 @@ export default function SystemAdminDashboard() {
       ["Pending submissions", totals.pending_submissions, "Awaiting teacher review"]
     ];
   }, [data.summary]);
+  const activeCourse = useMemo(() => data.courses.find((course) => activeTab === `course:${course.id}`), [activeTab, data.courses]);
 
   async function loadDashboard() {
     setLoading(true);
@@ -928,7 +934,7 @@ export default function SystemAdminDashboard() {
   }, []);
 
   return (
-    <main className="admin-shell">
+    <main className={`admin-shell ${sidebarOpen ? "" : "sidebar-collapsed"}`}>
       <aside className="admin-sidebar">
         <div className="brand-block">
           <BarChart3 size={28} />
@@ -937,17 +943,32 @@ export default function SystemAdminDashboard() {
             <span>System Admin</span>
           </div>
         </div>
+        <button type="button" className="sidebar-toggle" onClick={() => setSidebarOpen((open) => !open)} title={sidebarOpen ? "Hide sidebar" : "Show sidebar"}>
+          {sidebarOpen ? <PanelLeftClose size={18} /> : <PanelLeftOpen size={18} />}
+          <span>{sidebarOpen ? "Hide" : "Show"}</span>
+        </button>
         <nav>
           {tabs.map((tab) => {
             const Icon = tab.icon;
             return (
-              <button key={tab.id} className={activeTab === tab.id ? "active" : ""} onClick={() => setActiveTab(tab.id)}>
-                <Icon size={18} /> {tab.label}
-              </button>
+              <div key={tab.id} className="nav-group">
+                <button className={activeTab === tab.id ? "active" : ""} onClick={() => setActiveTab(tab.id)}>
+                  <Icon size={18} /><span>{tab.label}</span>
+                </button>
+              {tab.id === "courses" && sidebarOpen ? (
+                <div className="course-subnav">
+                  {data.courses.map((course) => (
+                    <button key={course.id} type="button" className={activeTab === `course:${course.id}` ? "active" : ""} onClick={() => setActiveTab(`course:${course.id}`)}>
+                      <span>{course.name}</span>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+              </div>
             );
           })}
         </nav>
-        <button className="logout-button" onClick={logout}><LogOut size={18} /> Sign out</button>
+        <button className="logout-button" onClick={logout}><LogOut size={18} /><span>Sign out</span></button>
       </aside>
 
       <section className="admin-main">
@@ -1033,6 +1054,24 @@ export default function SystemAdminDashboard() {
               { key: "is_published", label: "Published", render: (row) => row.is_published ? "Yes" : "No" },
               { key: "published_at", label: "Published at", render: (row) => row.published_at || "-" }
             ]} />
+          </section>
+        )}
+
+        {!loading && activeCourse && (
+          <section className="panel">
+            <h2>{activeCourse.name}</h2>
+            {activeCourse.name === "Web development" ? (
+              <div className="module-card-grid">
+                {(activeCourse.modules || []).map((module) => (
+                  <article className="module-card" key={module.id}>
+                    <span>Module {module.sort_order}</span>
+                    <h3>{module.name}</h3>
+                    <p>{module.objectives}</p>
+                    <strong>{module.badge_name} · {module.xp_points} XP</strong>
+                  </article>
+                ))}
+              </div>
+            ) : <p className="helper-text">Program under development coming soon.</p>}
           </section>
         )}
 

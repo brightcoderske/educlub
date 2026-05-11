@@ -26,17 +26,22 @@ router.get("/results", async (req, res, next) => {
       where.push(`tr.term_id = $${values.length}`);
     }
     values.push(limit, offset);
+    const source = `(
+      select id, learner_id, school_id, term_id, wpm, accuracy, time_taken_seconds, created_at from typing_results
+      union all
+      select id, learner_id, school_id, term_id, wpm, accuracy, time_taken_seconds, created_at from typing_attempts
+    ) tr`;
     res.json(await list(
       `select tr.id, tr.learner_id, tr.school_id, tr.term_id, tr.wpm, tr.accuracy, tr.time_taken_seconds, tr.created_at,
               u.full_name, u.grade, u.stream, s.name as school_name, coalesce(t.label, t.name::text) as term_name
-       from typing_results tr
+       from ${source}
        join users u on u.id = tr.learner_id
        join schools s on s.id = tr.school_id
        join terms t on t.id = tr.term_id
        where ${where.join(" and ")}
        order by tr.created_at desc limit $${values.length - 1} offset $${values.length}`,
       values,
-      `select count(*) from typing_results tr where ${where.join(" and ")}`,
+      `select count(*) from ${source} where ${where.join(" and ")}`,
       values.slice(0, -2)
     ));
   } catch (error) {

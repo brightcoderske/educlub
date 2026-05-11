@@ -1,30 +1,27 @@
 .school-shell {
   min-height: 100vh;
   display: grid;
-  grid-template-columns: 292px minmax(0, 1fr);
-  background:
-    radial-gradient(circle at 90% 8%, rgba(255, 211, 105, 0.34), transparent 22%),
-    radial-gradient(circle at 12% 24%, rgba(100, 213, 186, 0.28), transparent 24%),
-    linear-gradient(180deg, #f7fcff 0%, #fffaf0 48%, #f1faf5 100%);
+  grid-template-columns: 64px minmax(0, 1fr);
+  background: #f6f8fb;
   color: #182638;
 }
 
 .school-sidebar {
-  background: linear-gradient(180deg, #17324d, #1b5c54);
+  background: #17324d;
   color: #fff;
-  padding: 24px 16px;
+  padding: 12px 8px;
   display: flex;
   flex-direction: column;
-  gap: 24px;
-  box-shadow: 16px 0 48px rgba(23, 50, 77, 0.18);
+  gap: 12px;
+  box-shadow: 8px 0 22px rgba(23, 50, 77, 0.12);
 }
 
 .school-brand {
   display: flex;
-  gap: 12px;
+  gap: 8px;
   align-items: center;
-  padding: 14px;
-  border-radius: 20px;
+  padding: 10px;
+  border-radius: 12px;
   background: rgba(255, 255, 255, 0.1);
 }
 
@@ -43,13 +40,30 @@
   gap: 6px;
 }
 
+.school-sidebar .nav-group {
+  display: grid;
+  gap: 4px;
+}
+
+.school-sidebar .course-subnav {
+  display: grid;
+  gap: 3px;
+  padding-left: 16px;
+}
+
+.school-sidebar .course-subnav button {
+  min-height: 34px;
+  font-size: 0.86rem;
+  color: #d6efe6;
+}
+
 .school-sidebar button {
   border: 0;
   color: inherit;
   background: transparent;
-  min-height: 42px;
-  border-radius: 14px;
-  padding: 10px 12px;
+  min-height: 38px;
+  border-radius: 10px;
+  padding: 8px;
   display: flex;
   align-items: center;
   justify-content: flex-start;
@@ -62,41 +76,76 @@
   background: rgba(255, 255, 255, 0.15);
 }
 
+.school-sidebar .sidebar-toggle {
+  justify-content: center;
+  border: 1px solid rgba(255,255,255,0.14);
+  background: rgba(255,255,255,0.08);
+}
+
+.school-shell.sidebar-collapsed {
+  grid-template-columns: 64px minmax(0, 1fr);
+}
+
+.school-shell.sidebar-collapsed .school-sidebar {
+  padding-inline: 8px;
+}
+
+.school-shell.sidebar-collapsed .school-brand div,
+.school-shell.sidebar-collapsed .school-sidebar nav span,
+.school-shell.sidebar-collapsed .course-subnav,
+.school-shell.sidebar-collapsed .logout-button span,
+.school-shell.sidebar-collapsed .sidebar-toggle span {
+  display: none;
+}
+
+.school-shell.sidebar-collapsed .school-sidebar button,
+.school-shell.sidebar-collapsed .logout-button {
+  justify-content: center;
+  padding-inline: 6px;
+}
+
+.school-shell:not(.sidebar-collapsed) {
+  grid-template-columns: 220px minmax(0, 1fr);
+}
+
+.school-shell:not(.sidebar-collapsed) .school-sidebar {
+  padding-inline: 12px;
+}
+
 .school-main {
-  padding: 30px;
+  padding: 22px;
   display: grid;
   align-content: start;
-  gap: 22px;
+  gap: 16px;
 }
 
 .school-hero {
-  min-height: 240px;
-  padding: 32px;
-  border-radius: 28px;
+  min-height: 132px;
+  padding: 20px;
+  border-radius: 12px;
   display: flex;
   justify-content: space-between;
   gap: 24px;
   align-items: center;
   color: #12324a;
-  background:
-    linear-gradient(115deg, rgba(255,255,255,0.9), rgba(255,255,255,0.58)),
-    linear-gradient(135deg, #aee7ff 0%, #fff0b3 50%, #bdf0d2 100%);
-  border: 1px solid rgba(255,255,255,0.82);
-  box-shadow: 0 24px 62px rgba(35, 66, 96, 0.14);
+  background: #fff;
+  border: 1px solid #dfe8f2;
+  box-shadow: 0 10px 24px rgba(35, 66, 96, 0.06);
 }
 
 .school-hero h1 {
   margin: 0;
   max-width: 760px;
-  font-size: clamp(2rem, 5vw, 4.35rem);
-  line-height: 1.03;
+  font-size: 1.8rem;
+  line-height: 1.18;
 }
 
 .school-hero p:not(.eyebrow) {
   max-width: 680px;
   color: #294961;
-  line-height: 1.7;
-  font-size: 1.06rem;
+  line-height: 1.45;
+  font-size: 0.96rem;
+  margin: 8px 0 0;
 }
 
 .school-hero-title {
@@ -106,10 +155,10 @@
 }
 
 .school-logo-md {
-  width: 86px;
-  height: 86px;
+  width: 58px;
+  height: 58px;
   object-fit: contain;
-  border-radius: 20px;
+  border-radius: 10px;
   background: rgba(255,255,255,0.88);
   border: 1px solid rgba(255,255,255,0.96);
   padding: 8px;
@@ -117,11 +166,11 @@
 }
 
 .last-login-card {
-  width: min(260px, 100%);
-  padding: 18px;
-  border-radius: 22px;
-  background: rgba(255,255,255,0.78);
-  border: 1px solid rgba(255,255,255,0.86);
+  width: min(220px, 100%);
+  padding: 12px;
+  border-radius: 10px;
+  background: #f8fbff;
+  border: 1px solid #dfe8f2;
   display: grid;
   gap: 8px;
   box-shadow: 0 14px 36px rgba(18, 50, 74, 0.13);
@@ -140,22 +189,22 @@
 
 .school-section {
   display: grid;
-  gap: 18px;
+  gap: 14px;
 }
 
 .school-stats {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 16px;
+  gap: 12px;
 }
 
 .school-stat {
-  min-height: 136px;
-  padding: 20px;
-  border-radius: 24px;
+  min-height: 86px;
+  padding: 14px;
+  border-radius: 10px;
   background: #fff;
   border: 1px solid #dfe8f2;
-  box-shadow: 0 14px 34px rgba(35, 66, 96, 0.08);
+  box-shadow: 0 8px 18px rgba(35, 66, 96, 0.05);
   display: grid;
   align-content: space-between;
 }
@@ -166,41 +215,42 @@
 }
 
 .school-stat strong {
-  font-size: 2.45rem;
+  font-size: 1.55rem;
 }
 
-.school-stat.blue { border-top: 8px solid #2367d1; }
-.school-stat.green { border-top: 8px solid #1f9d72; }
-.school-stat.gold { border-top: 8px solid #f5b833; }
-.school-stat.coral { border-top: 8px solid #f1725e; }
+.school-stat.blue { border-top: 4px solid #2367d1; }
+.school-stat.green { border-top: 4px solid #1f9d72; }
+.school-stat.gold { border-top: 4px solid #f5b833; }
+.school-stat.coral { border-top: 4px solid #f1725e; }
 
 .growth-card {
-  padding: 24px;
-  border-radius: 24px;
-  background: #17324d;
-  color: #fff;
+  padding: 16px;
+  border-radius: 10px;
+  background: #fff;
+  color: #182638;
   display: flex;
   justify-content: space-between;
   gap: 20px;
   align-items: center;
-  box-shadow: 0 18px 46px rgba(23, 50, 77, 0.24);
+  border: 1px solid #dfe8f2;
+  box-shadow: 0 8px 18px rgba(35, 66, 96, 0.05);
 }
 
 .growth-card .eyebrow,
 .growth-card p {
-  color: #d8e8f5;
+  color: #5c6d80;
 }
 
 .growth-card h2 {
   margin: 0;
-  font-size: 2rem;
+  font-size: 1.35rem;
 }
 
 .school-form {
   display: grid;
-  gap: 12px;
-  padding: 16px;
-  border-radius: 18px;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 10px;
   border: 1px solid #dfe8f2;
   background: #fbfefe;
 }
@@ -485,14 +535,21 @@
 
 .quiz-school-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
+  align-items: start;
 }
 
 .grade-checks {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
+}
+
+.module-availability-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
 }
 
 .helper-text {

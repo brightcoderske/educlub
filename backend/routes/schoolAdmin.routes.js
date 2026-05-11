@@ -28,6 +28,7 @@ router.get("/typing-results", controller.typingResults);
 router.get("/typing/global-tests", controller.globalTypingTests);
 router.get("/typing/school-tests", controller.schoolTypingTests);
 router.post("/typing/school-tests", controller.createSchoolTypingTest);
+router.patch("/typing/school-tests/:id", controller.updateSchoolTypingTest);
 router.post("/typing/tests/:id/assign", controller.assignTypingTest);
 router.get("/typing/assignments", controller.typingAssignments);
 router.get("/typing/performance", controller.typingPerformance);

@@ -27,11 +27,19 @@ const typingTestForTaking = wrap(async (req, res) => {
 const submitTypingAttempt = wrap(async (req, res) => {
   res.status(201).json(await service.submitTypingAttempt(req.user, req.params.id, req.body));
 });
+const courseForLearning = wrap(async (req, res) => {
+  res.json(await service.courseForLearning(req.user, req.params.id));
+});
+const saveLessonProgress = wrap(async (req, res) => {
+  res.json(await service.saveLessonProgress(req.user, req.params.id, req.body));
+});
 
 module.exports = {
   dashboard,
   quizForTaking,
   submitQuizAttempt,
   typingTestForTaking,
-  submitTypingAttempt
+  submitTypingAttempt,
+  courseForLearning,
+  saveLessonProgress
 };

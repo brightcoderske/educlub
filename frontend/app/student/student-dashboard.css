@@ -1,7 +1,7 @@
 .student-shell {
   min-height: 100vh;
   display: grid;
-  grid-template-columns: 280px minmax(0, 1fr);
+  grid-template-columns: 64px minmax(0, 1fr);
   background:
     radial-gradient(circle at 90% 10%, rgba(245, 184, 51, 0.26), transparent 24%),
     radial-gradient(circle at 15% 20%, rgba(31, 157, 114, 0.22), transparent 25%),
@@ -10,21 +10,21 @@
 }
 
 .student-sidebar {
-  padding: 24px 16px;
+  padding: 12px 8px;
   display: flex;
   flex-direction: column;
-  gap: 24px;
-  background: linear-gradient(180deg, #17324d, #2367d1);
+  gap: 12px;
+  background: #17324d;
   color: #fff;
-  box-shadow: 16px 0 48px rgba(23, 50, 77, 0.18);
+  box-shadow: 8px 0 22px rgba(23, 50, 77, 0.12);
 }
 
 .student-brand {
   display: flex;
-  gap: 12px;
+  gap: 8px;
   align-items: center;
-  padding: 14px;
-  border-radius: 18px;
+  padding: 10px;
+  border-radius: 12px;
   background: rgba(255, 255, 255, 0.12);
 }
 
@@ -45,17 +45,48 @@
 
 .student-sidebar button,
 .student-logout {
-  min-height: 42px;
+  min-height: 38px;
   border: 0;
-  border-radius: 14px;
+  border-radius: 10px;
   display: flex;
   align-items: center;
   justify-content: flex-start;
   gap: 10px;
-  padding: 10px 12px;
+  padding: 8px;
   background: transparent;
   color: inherit;
   cursor: pointer;
+}
+
+.student-sidebar-toggle {
+  justify-content: center !important;
+  border: 1px solid rgba(255,255,255,0.14) !important;
+  background: rgba(255,255,255,0.08) !important;
+}
+
+.student-shell:not(.sidebar-collapsed) {
+  grid-template-columns: 220px minmax(0, 1fr);
+}
+
+.student-shell:not(.sidebar-collapsed) .student-sidebar {
+  padding-inline: 12px;
+}
+
+.student-shell.sidebar-collapsed {
+  grid-template-columns: 64px minmax(0, 1fr);
+}
+
+.student-shell.sidebar-collapsed .student-brand div,
+.student-shell.sidebar-collapsed .student-sidebar nav span,
+.student-shell.sidebar-collapsed .student-logout span,
+.student-shell.sidebar-collapsed .student-sidebar-toggle span {
+  display: none;
+}
+
+.student-shell.sidebar-collapsed .student-sidebar button,
+.student-shell.sidebar-collapsed .student-logout {
+  justify-content: center;
+  padding-inline: 6px;
 }
 
 .student-sidebar button:hover,
@@ -324,6 +355,30 @@
   color: #25384d;
   line-height: 1.8;
   font-weight: 700;
+  white-space: pre-wrap;
+  user-select: none;
+}
+
+.typing-passage span {
+  border-radius: 3px;
+}
+
+.typing-passage .correct {
+  color: #137a4b;
+  background: #dcf7e9;
+}
+
+.typing-passage .wrong {
+  color: #b42318;
+  background: #fde2df;
+}
+
+.typing-passage .pending {
+  color: #5c6d80;
+}
+
+.typing-passage .current {
+  box-shadow: inset 0 -2px 0 #2367d1;
 }
 
 .typing-input {
@@ -337,9 +392,124 @@
   line-height: 1.65;
 }
 
+.typing-auto-submit {
+  opacity: 0.55;
+  cursor: not-allowed;
+  filter: grayscale(0.2);
+}
+
+.course-workspace {
+  width: min(1280px, calc(100vw - 28px));
+  max-height: calc(100vh - 28px);
+  overflow: auto;
+  background: #fff;
+  border-radius: 18px;
+  padding: 22px;
+  box-shadow: 0 30px 90px rgba(16, 41, 67, 0.28);
+}
+
+.course-workspace-grid {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  gap: 18px;
+}
+
+.module-list {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  max-height: 70vh;
+  overflow: auto;
+}
+
+.module-list section {
+  border: 1px solid #dfe8f2;
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.module-list h3,
+.module-list p {
+  margin: 0 0 8px;
+}
+
+.module-list button {
+  width: 100%;
+  justify-content: flex-start;
+  margin-top: 6px;
+}
+
+.module-list button.active {
+  background: #1f9d72;
+}
+
+.lesson-sections {
+  display: grid;
+  gap: 14px;
+}
+
+.lesson-sections section {
+  border: 1px solid #dfe8f2;
+  border-radius: 8px;
+  padding: 14px;
+}
+
+.lesson-sections h3 {
+  margin: 0 0 8px;
+}
+
+.lesson-sections textarea {
+  width: 100%;
+  min-height: 150px;
+  font: 0.92rem/1.5 ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
+.code-playground {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+}
+
+.code-playground iframe {
+  width: 100%;
+  min-height: 260px;
+  border: 1px solid #cbd8e6;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.mini-quiz-question {
+  border: 1px solid #e4edf6;
+  border-radius: 8px;
+  margin: 10px 0;
+  padding: 10px;
+}
+
+.mini-quiz-question label {
+  display: block;
+  margin-top: 6px;
+}
+
+.lesson-action-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .student-trend-chart {
   display: grid;
   gap: 10px;
+}
+
+.link-button {
+  border: 0;
+  background: transparent;
+  color: #2367d1;
+  padding: 0;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
 }
 
 .student-trend-chart svg {

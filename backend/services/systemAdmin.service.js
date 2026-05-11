@@ -3,6 +3,8 @@ const fs = require("fs");
 const path = require("path");
 const { one, list, query, pagination, transaction } = require("../config/database");
 const { recordAudit } = require("../utils/audit");
+const { ensureDefaultCourses } = require("../utils/courseSeed");
+const { ensureTypingColumns } = require("../utils/schemaGuard");
 
 const SYSTEM_ADMIN = "system_admin";
 const TERM_LABELS = ["Term 1", "Term 2", "Term 3"];
@@ -172,7 +174,11 @@ async function getSchoolDetail(id) {
        left join learner_profiles lp on lp.user_id = u.id and lp.school_id = u.school_id
        left join enrolments e on e.learner_id = lp.id and e.school_id = u.school_id
        left join quiz_attempts qa on qa.learner_id = u.id and qa.school_id = u.school_id
-       left join typing_results tr on tr.learner_id = u.id and tr.school_id = u.school_id
+       left join (
+         select learner_id, school_id, wpm from typing_results
+         union all
+         select learner_id, school_id, wpm from typing_attempts
+       ) tr on tr.learner_id = u.id and tr.school_id = u.school_id
        where u.school_id = $1 and u.role = 'student' and u.deleted_at is null
        group by u.id
        order by u.grade nulls last, u.stream nulls last, coalesce(u.full_name, u.name)`,
@@ -320,7 +326,10 @@ async function deleteSchoolPermanently(id) {
     await client.query("delete from leaderboard_entries where school_id = $1", [id]);
     await client.query("delete from report_cards where school_id = $1", [id]);
     await client.query("delete from submissions where school_id = $1", [id]);
+    await client.query("delete from typing_attempts where school_id = $1", [id]);
+    await client.query("delete from typing_assignments where school_id = $1", [id]);
     await client.query("delete from typing_results where school_id = $1", [id]);
+    await client.query("delete from typing_tests where school_id = $1", [id]);
     await client.query("delete from quiz_attempts where school_id = $1", [id]);
     await client.query("delete from quiz_question_school_visibility where school_id = $1", [id]);
     await client.query("delete from quiz_items where quiz_id in (select id from quizzes where school_id = $1)", [id]);
@@ -704,6 +713,7 @@ async function reactivateUser(id, user) {
 }
 
 async function listCourses(params = {}) {
+  await ensureDefaultCourses({ query });
   const { limit, offset } = pagination(params);
   const values = [];
   const where = ["deleted_at is null"];
@@ -713,9 +723,14 @@ async function listCourses(params = {}) {
   }
   values.push(limit, offset);
   return list(
-    `select id, coalesce(name, title) as name, coalesce(objectives, description) as objectives, club, is_published, published_at, created_at
-     from courses where ${where.join(" and ")}
-     order by created_at desc limit $${values.length - 1} offset $${values.length}`,
+    `select c.id, coalesce(c.name, c.title) as name, coalesce(c.objectives, c.description) as objectives, c.club,
+            c.is_published, c.is_coming_soon, c.published_at, c.created_at,
+            coalesce(json_agg(json_build_object('id', m.id, 'name', coalesce(m.name, m.title), 'objectives', coalesce(m.objectives, m.description), 'sort_order', m.sort_order, 'badge_name', m.badge_name, 'xp_points', m.xp_points) order by m.sort_order) filter (where m.id is not null), '[]'::json) as modules
+     from courses c
+     left join modules m on m.course_id = c.id
+     where ${where.map((clause) => clause.replace(/^deleted_at/, "c.deleted_at").replace(/^club/, "c.club")).join(" and ")}
+     group by c.id
+     order by c.created_at desc limit $${values.length - 1} offset $${values.length}`,
     values,
     `select count(*) from courses where ${where.join(" and ")}`,
     values.slice(0, -2)
@@ -1044,15 +1059,17 @@ function normalizeTypingTestPayload(payload = {}) {
     title,
     passage,
     durationSeconds: Math.min(Math.max(Number(payload.duration_seconds || 300), 30), 1800),
+    maxAttempts: Math.min(Math.max(Number(payload.max_attempts || 3), 1), 20),
     gradeLevels: normalizeGrades(payload.grade_levels || [1]),
     isPublished: payload.is_published !== false
   };
 }
 
 async function listGlobalTypingTests(params = {}) {
+  await ensureTypingColumns({ query });
   const { limit, offset } = pagination(params);
   return list(
-    `select id, title, duration_seconds, grade_levels, is_global, is_published, created_at,
+    `select id, title, duration_seconds, max_attempts, grade_levels, is_global, is_published, created_at,
             left(passage, 140) as passage_preview
      from typing_tests
      where is_global = true and deleted_at is null
@@ -1067,10 +1084,10 @@ async function listGlobalTypingTests(params = {}) {
 async function createGlobalTypingTest(payload, user) {
   const normalized = normalizeTypingTestPayload(payload);
   const test = await one(
-    `insert into typing_tests (school_id, title, passage, duration_seconds, grade_levels, is_global, is_published, created_by)
-     values (null, $1, $2, $3, $4, true, $5, $6)
-     returning id, title, passage, duration_seconds, grade_levels, is_global, is_published, created_at`,
-    [normalized.title, normalized.passage, normalized.durationSeconds, normalized.gradeLevels, normalized.isPublished, user?.sub || null]
+    `insert into typing_tests (school_id, title, passage, duration_seconds, max_attempts, grade_levels, is_global, is_published, created_by)
+     values (null, $1, $2, $3, $4, $5, true, $6, $7)
+     returning id, title, passage, duration_seconds, max_attempts, grade_levels, is_global, is_published, created_at`,
+    [normalized.title, normalized.passage, normalized.durationSeconds, normalized.maxAttempts, normalized.gradeLevels, normalized.isPublished, user?.sub || null]
   );
   await recordAudit({
     actor: user,
@@ -1086,10 +1103,10 @@ async function updateGlobalTypingTest(id, payload, user) {
   const normalized = normalizeTypingTestPayload(payload);
   const test = await one(
     `update typing_tests
-     set title = $2, passage = $3, duration_seconds = $4, grade_levels = $5, is_published = $6, updated_at = now()
+     set title = $2, passage = $3, duration_seconds = $4, max_attempts = $5, grade_levels = $6, is_published = $7, updated_at = now()
      where id = $1 and is_global = true and deleted_at is null
-     returning id, title, passage, duration_seconds, grade_levels, is_global, is_published, updated_at`,
-    [id, normalized.title, normalized.passage, normalized.durationSeconds, normalized.gradeLevels, normalized.isPublished]
+     returning id, title, passage, duration_seconds, max_attempts, grade_levels, is_global, is_published, updated_at`,
+    [id, normalized.title, normalized.passage, normalized.durationSeconds, normalized.maxAttempts, normalized.gradeLevels, normalized.isPublished]
   );
   if (test) {
     await recordAudit({
@@ -1131,7 +1148,16 @@ async function dashboardSummary(params = {}) {
     one("select count(*)::int as count from submissions where status = 'submitted' and ($1::uuid is null or term_id = $1)", [termId]),
     one("select count(*)::int as count from audit_logs"),
     one("select avg(score)::numeric as average from quiz_attempts where ($1::uuid is null or term_id = $1)", [termId]),
-    one("select avg(wpm)::numeric as average from typing_results where ($1::uuid is null or term_id = $1)", [termId])
+    one(
+      `select avg(wpm)::numeric as average
+       from (
+         select term_id, wpm from typing_results
+         union all
+         select term_id, wpm from typing_attempts
+       ) typing
+       where ($1::uuid is null or term_id = $1)`,
+      [termId]
+    )
   ]);
 
   return {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Award,
   BarChart3,
@@ -11,6 +11,8 @@ import {
   LayoutDashboard,
   LogOut,
   Medal,
+  PanelLeftClose,
+  PanelLeftOpen,
   Target,
   Trophy
 } from "lucide-react";
@@ -49,6 +51,22 @@ function liveTypingStats(passage, typedText, startedAt) {
     wpm: (correct / 5) / elapsedMinutes,
     accuracy: typed.length ? (correct / typed.length) * 100 : 100
   };
+}
+
+function TypingProgress({ passage, typedText }) {
+  const expected = String(passage || "");
+  const typed = String(typedText || "");
+  return (
+    <div className="typing-passage" onCopy={(event) => event.preventDefault()}>
+      {expected.split("").map((char, index) => {
+        const typedChar = typed[index];
+        let className = "pending";
+        if (typedChar !== undefined) className = typedChar === char ? "correct" : "wrong";
+        if (index === typed.length) className = `${className} current`;
+        return <span key={`${char}-${index}`} className={className}>{char}</span>;
+      })}
+    </div>
+  );
 }
 
 function StatCard({ label, value, icon: Icon, tone }) {
@@ -187,18 +205,79 @@ function LiveReportCard({ report }) {
   );
 }
 
+function WebCourseWorkspace({ course, selectedLesson, lessonDraft, setLessonDraft, onSelectLesson, onSaveLesson, onClose }) {
+  const quiz = Array.isArray(selectedLesson?.quiz) ? selectedLesson.quiz : [];
+  const practiceCode = lessonDraft.practice_code ?? selectedLesson?.practice_code ?? selectedLesson?.starter_code ?? selectedLesson?.example ?? "";
+  return (
+    <div className="quiz-take-backdrop">
+      <section className="course-workspace" role="dialog" aria-modal="true" aria-label={course.name}>
+        <div className="quiz-take-header">
+          <div><p className="eyebrow">Web Development</p><h2>{course.name}</h2><p>{course.objectives}</p></div>
+          <button type="button" className="student-secondary" onClick={onClose}>Close</button>
+        </div>
+        <div className="course-workspace-grid">
+          <aside className="module-list">
+            {course.modules.map((module) => (
+              <section key={module.id}>
+                <h3>{module.sort_order}. {module.name}</h3>
+                <p>{module.is_locked ? "Locked until your teacher opens it." : module.badge_name}</p>
+                {module.lessons.map((lesson) => (
+                  <button key={lesson.id} type="button" disabled={module.is_locked} className={selectedLesson?.id === lesson.id ? "active" : ""} onClick={() => onSelectLesson(lesson)}>{lesson.name}</button>
+                ))}
+              </section>
+            ))}
+          </aside>
+          {selectedLesson ? (
+            <div className="lesson-sections">
+              <section><h3>Learn</h3><p>{selectedLesson.learning_notes || selectedLesson.content}</p></section>
+              <section>
+                <h3>Practice</h3><p>{selectedLesson.practice_prompt}</p>
+                <div className="code-playground">
+                  <textarea value={practiceCode} onChange={(e) => setLessonDraft((draft) => ({ ...draft, practice_code: e.target.value }))} />
+                  <iframe title="Live preview" srcDoc={practiceCode} sandbox="allow-scripts" />
+                </div>
+              </section>
+              <section><h3>Home Task</h3><p>{selectedLesson.homework_prompt}</p><textarea value={lessonDraft.homework_code ?? selectedLesson.homework_code ?? ""} onChange={(e) => setLessonDraft((draft) => ({ ...draft, homework_code: e.target.value }))} /></section>
+              <section><h3>Creativity Base</h3><p>{selectedLesson.creativity_prompt}</p><textarea value={lessonDraft.creativity_code ?? selectedLesson.creativity_code ?? ""} onChange={(e) => setLessonDraft((draft) => ({ ...draft, creativity_code: e.target.value }))} /></section>
+              <section>
+                <h3>Quiz</h3>
+                {quiz.map((question, index) => (
+                  <fieldset key={`${question.question}-${index}`} className="mini-quiz-question">
+                    <legend>{index + 1}. {question.question}</legend>
+                    {(question.options || []).map((option) => <label key={option}><input type="radio" name={`lesson-${selectedLesson.id}-${index}`} checked={(lessonDraft.quiz_answers || {})[index] === option} onChange={() => setLessonDraft((draft) => ({ ...draft, quiz_answers: { ...(draft.quiz_answers || {}), [index]: option } }))} />{option}</label>)}
+                  </fieldset>
+                ))}
+              </section>
+              <div className="lesson-action-row">
+                <button type="button" onClick={() => onSaveLesson(false)}>Autosave now</button>
+                <button type="button" onClick={() => onSaveLesson(true)}>Submit lesson quiz</button>
+                {selectedLesson.score !== null && selectedLesson.score !== undefined ? <strong>{Number(selectedLesson.score).toFixed(1)}%</strong> : null}
+              </div>
+            </div>
+          ) : <EmptyState title="Choose an open lesson to begin." />}
+        </div>
+      </section>
+    </div>
+  );
+}
+
 export default function StudentPage() {
   const [activeTab, setActiveTab] = useState("overview");
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [user, setUser] = useState(null);
   const [dashboard, setDashboard] = useState(null);
   const [activeQuiz, setActiveQuiz] = useState(null);
   const [activeTyping, setActiveTyping] = useState(null);
+  const [activeCourse, setActiveCourse] = useState(null);
+  const [selectedLesson, setSelectedLesson] = useState(null);
+  const [lessonDraft, setLessonDraft] = useState({});
   const [answers, setAnswers] = useState({});
   const [typedText, setTypedText] = useState("");
   const [typingStartedAt, setTypingStartedAt] = useState(null);
   const [typingRemaining, setTypingRemaining] = useState(0);
   const [quizResult, setQuizResult] = useState(null);
   const [typingResult, setTypingResult] = useState(null);
+  const [typingSubmitting, setTypingSubmitting] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -207,7 +286,7 @@ export default function StudentPage() {
     return term ? `${term.year} - ${term.name}` : "No active term";
   }, [dashboard]);
 
-  async function loadDashboard() {
+  const loadDashboard = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
@@ -217,7 +296,7 @@ export default function StudentPage() {
     } finally {
       setLoading(false);
     }
-  }
+  }, []);
 
   useEffect(() => {
     const sessionUser = currentUser();
@@ -227,7 +306,7 @@ export default function StudentPage() {
     }
     setUser(sessionUser);
     loadDashboard();
-  }, []);
+  }, [loadDashboard]);
 
   const summary = dashboard?.summary || {};
 
@@ -245,6 +324,7 @@ export default function StudentPage() {
   async function openTypingTest(testId) {
     setError("");
     setTypingResult(null);
+    setTypingSubmitting(false);
     setTypedText("");
     setTypingStartedAt(null);
     try {
@@ -254,6 +334,46 @@ export default function StudentPage() {
     } catch (err) {
       setError(err.message);
     }
+  }
+
+  async function openCourse(course) {
+    setError("");
+    if (course.is_coming_soon) {
+      setError("Program under development coming soon.");
+      return;
+    }
+    try {
+      const detail = await api.get(`/student/courses/${course.course_id}`);
+      setActiveCourse(detail);
+      const firstLesson = detail.modules.find((module) => !module.is_locked)?.lessons?.[0] || null;
+      setSelectedLesson(firstLesson);
+      setLessonDraft({});
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  function selectLesson(lesson) {
+    setSelectedLesson(lesson);
+    setLessonDraft({});
+  }
+
+  async function saveLesson(submitQuiz = false) {
+    if (!selectedLesson || !activeCourse) return;
+    const saved = await api.patch(`/student/lessons/${selectedLesson.id}/progress`, {
+      ...lessonDraft,
+      submit_quiz: submitQuiz
+    });
+    const detail = await api.get(`/student/courses/${activeCourse.id}`);
+    setActiveCourse(detail);
+    setSelectedLesson(detail.modules.flatMap((module) => module.lessons).find((lesson) => lesson.id === selectedLesson.id) || selectedLesson);
+    setLessonDraft({
+      practice_code: saved.practice_code,
+      homework_code: saved.homework_code,
+      creativity_code: saved.creativity_code,
+      quiz_answers: saved.quiz_answers || {}
+    });
+    await loadDashboard();
   }
 
   async function submitQuiz(event) {
@@ -268,19 +388,50 @@ export default function StudentPage() {
     }
   }
 
-  async function submitTyping(event) {
-    event.preventDefault();
+  const finishTypingTest = useCallback(async (finalText = typedText) => {
+    if (!activeTyping || typingResult || typingSubmitting) return;
     setError("");
+    setTypingSubmitting(true);
     try {
-      const elapsed = typingStartedAt ? Math.max(Math.round((Date.now() - typingStartedAt) / 1000), 1) : 1;
+      const duration = Number(activeTyping.duration_seconds || 300);
+      const elapsed = typingStartedAt ? Math.max(Math.round((Date.now() - typingStartedAt) / 1000), 1) : duration;
+      const passageLength = String(activeTyping.passage || "").length;
       const result = await api.post(`/student/typing-tests/${activeTyping.typing_test_id}/attempts`, {
-        typed_text: typedText,
-        time_taken_seconds: elapsed
+        typed_text: String(finalText || "").slice(0, passageLength),
+        time_taken_seconds: Math.min(elapsed, duration)
       });
       setTypingResult(result);
       await loadDashboard();
     } catch (err) {
       setError(err.message);
+      setTypingSubmitting(false);
+    }
+  }, [activeTyping, typedText, typingStartedAt, typingResult, typingSubmitting, loadDashboard]);
+
+  async function submitTyping(event) {
+    event.preventDefault();
+    await finishTypingTest();
+  }
+
+  function updateTypedText(nextValue) {
+    if (!activeTyping || typingResult || typingSubmitting || typingRemaining <= 0) return;
+    const passage = String(activeTyping.passage || "");
+    const next = String(nextValue || "");
+    if (typedText.length >= passage.length) return;
+    if (next.length > passage.length) return;
+    if (next === typedText) return;
+
+    if (next.startsWith(typedText) && next.length === typedText.length + 1) {
+      if (!typingStartedAt) setTypingStartedAt(Date.now());
+      setTypedText(next);
+      return;
+    }
+
+    if (typedText.startsWith(next) && typedText.length === next.length + 1) {
+      if (typedText.endsWith(" ")) return;
+      const lockedUntil = typedText.lastIndexOf(" ") + 1;
+      if (next.length < lockedUntil) return;
+      setTypedText(next);
     }
   }
 
@@ -297,8 +448,22 @@ export default function StudentPage() {
     return () => window.clearInterval(timer);
   }, [activeTyping, typingStartedAt, typingResult]);
 
+  useEffect(() => {
+    if (!activeTyping || typingResult || typingSubmitting) return;
+    const passageLength = String(activeTyping.passage || "").length;
+    if (passageLength > 0 && typedText.length >= passageLength) {
+      finishTypingTest(typedText);
+    }
+  }, [activeTyping, typedText, typingResult, typingSubmitting, finishTypingTest]);
+
+  useEffect(() => {
+    if (activeTyping && typingStartedAt && !typingResult && !typingSubmitting && typingRemaining <= 0) {
+      finishTypingTest(typedText);
+    }
+  }, [activeTyping, typingStartedAt, typingRemaining, typingResult, typingSubmitting, typedText, finishTypingTest]);
+
   return (
-    <main className="student-shell">
+    <main className={`student-shell ${sidebarOpen ? "" : "sidebar-collapsed"}`}>
       <aside className="student-sidebar">
         <div className="student-brand">
           <Trophy size={28} />
@@ -307,13 +472,17 @@ export default function StudentPage() {
             <span>Learner</span>
           </div>
         </div>
+        <button type="button" className="student-sidebar-toggle" onClick={() => setSidebarOpen((open) => !open)} title={sidebarOpen ? "Hide sidebar" : "Show sidebar"}>
+          {sidebarOpen ? <PanelLeftClose size={18} /> : <PanelLeftOpen size={18} />}
+          <span>{sidebarOpen ? "Hide" : "Show"}</span>
+        </button>
         <nav>
           {tabs.map((tab) => {
             const Icon = tab.icon;
-            return <button key={tab.id} className={activeTab === tab.id ? "active" : ""} onClick={() => setActiveTab(tab.id)}><Icon size={18} />{tab.label}</button>;
+            return <button key={tab.id} className={activeTab === tab.id ? "active" : ""} onClick={() => setActiveTab(tab.id)}><Icon size={18} /><span>{tab.label}</span></button>;
           })}
         </nav>
-        <button className="student-logout" onClick={logout}><LogOut size={18} />Sign out</button>
+        <button className="student-logout" onClick={logout}><LogOut size={18} /><span>Sign out</span></button>
       </aside>
 
       <section className="student-main">
@@ -369,7 +538,7 @@ export default function StudentPage() {
           <section className="student-panel">
             <h2>My Courses</h2>
             <DataTable rows={dashboard.courses} emptyTitle="No enrolled courses for this term." columns={[
-              { key: "course_name", label: "Course" },
+              { key: "course_name", label: "Course", render: (row) => <button type="button" className="link-button" onClick={() => openCourse(row)}>{row.course_name}</button> },
               { key: "club", label: "Club", render: (row) => row.club || "-" },
               { key: "status", label: "Status" },
               { key: "term_name", label: "Term" }
@@ -415,7 +584,8 @@ export default function StudentPage() {
                 { key: "title", label: "Test" },
                 { key: "duration_seconds", label: "Seconds" },
                 { key: "best_wpm", label: "Best WPM", render: (row) => row.best_wpm == null ? "-" : Number(row.best_wpm).toFixed(1) },
-                { key: "action", label: "Action", render: (row) => <button type="button" onClick={() => openTypingTest(row.typing_test_id)}>Start test</button> }
+                { key: "attempts", label: "Attempts", render: (row) => `${row.attempts_used || 0}/${row.max_attempts || 3}` },
+                { key: "action", label: "Action", render: (row) => Number(row.attempts_used || 0) < Number(row.max_attempts || 3) ? <button type="button" onClick={() => openTypingTest(row.typing_test_id)}>Start test</button> : "Attempts used" }
               ]} />
             </section>
             <section className="student-panel">
@@ -520,7 +690,7 @@ export default function StudentPage() {
               </div>
             ) : (
               <form className="quiz-take-form" onSubmit={submitTyping}>
-                <div className="typing-passage">{activeTyping.passage}</div>
+                <TypingProgress passage={activeTyping.passage} typedText={typedText} />
                 {(() => {
                   const stats = liveTypingStats(activeTyping.passage, typedText, typingStartedAt);
                   return (
@@ -536,19 +706,35 @@ export default function StudentPage() {
                   value={typedText}
                   onKeyDown={(event) => {
                     if (!typingStartedAt) setTypingStartedAt(Date.now());
-                    if (event.key === "Backspace") event.preventDefault();
+                    if (event.key === "Backspace" && typedText.endsWith(" ")) event.preventDefault();
                   }}
-                  onChange={(event) => setTypedText(event.target.value)}
-                  disabled={typingRemaining <= 0}
+                  onPaste={(event) => event.preventDefault()}
+                  onDrop={(event) => event.preventDefault()}
+                  onBeforeInput={(event) => {
+                    if (event.nativeEvent?.inputType?.toLowerCase().includes("paste")) event.preventDefault();
+                  }}
+                  onChange={(event) => updateTypedText(event.target.value)}
+                  disabled={typingRemaining <= 0 || typingSubmitting || typedText.length >= String(activeTyping.passage || "").length}
                   rows={7}
                   autoFocus
                   required
                 />
-                <button type="submit"><CheckCircle2 size={16} />Submit typing test</button>
+                <button type="submit" disabled className="typing-auto-submit"><CheckCircle2 size={16} />{typingSubmitting ? "Submitting..." : "Auto-submits at finish"}</button>
               </form>
             )}
           </section>
         </div>
+      ) : null}
+      {activeCourse ? (
+        <WebCourseWorkspace
+          course={activeCourse}
+          selectedLesson={selectedLesson}
+          lessonDraft={lessonDraft}
+          setLessonDraft={setLessonDraft}
+          onSelectLesson={selectLesson}
+          onSaveLesson={saveLesson}
+          onClose={() => setActiveCourse(null)}
+        />
       ) : null}
     </main>
   );

@@ -103,6 +103,7 @@ const typingResults = wrap(async (req, res) => res.json(await service.typingResu
 const globalTypingTests = wrap(async (req, res) => res.json(await service.globalTypingTests(req.user)));
 const schoolTypingTests = wrap(async (req, res) => res.json(await service.schoolTypingTests(req.user)));
 const createSchoolTypingTest = wrap(async (req, res) => res.status(201).json(await service.createSchoolTypingTest(req.user, req.body)));
+const updateSchoolTypingTest = wrap(async (req, res) => res.json(await service.updateSchoolTypingTest(req.user, req.params.id, req.body)));
 const assignTypingTest = wrap(async (req, res) => res.json(await service.assignTypingTest(req.user, req.params.id, req.body)));
 const typingAssignments = wrap(async (req, res) => res.json(await service.typingAssignments(req.user, req.query)));
 const typingPerformance = wrap(async (req, res) => res.json(await service.typingPerformance(req.user, req.query)));
@@ -226,6 +227,7 @@ module.exports = {
   globalTypingTests,
   schoolTypingTests,
   createSchoolTypingTest,
+  updateSchoolTypingTest,
   assignTypingTest,
   typingAssignments,
   typingPerformance,

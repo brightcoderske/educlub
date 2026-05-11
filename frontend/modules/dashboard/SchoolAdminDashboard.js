@@ -14,6 +14,8 @@ import {
   GraduationCap,
   LayoutDashboard,
   LogOut,
+  PanelLeftClose,
+  PanelLeftOpen,
   Plus,
   Settings,
   Sparkles,
@@ -27,6 +29,7 @@ const tabs = [
   { id: "overview", label: "Overview", icon: LayoutDashboard },
   { id: "learners", label: "Learners", icon: Users },
   { id: "term", label: "Term", icon: CalendarDays },
+  { id: "courses", label: "Courses", icon: BookOpen },
   { id: "submissions", label: "Submissions", icon: Upload },
   { id: "typing", label: "Typing", icon: Gauge },
   { id: "quizzes", label: "Quizzes", icon: ClipboardList },
@@ -200,8 +203,10 @@ function BulkLearnerUpload({ onUploaded }) {
 function CourseAllocationPanel({ learners, courses, onAllocated }) {
   const [courseId, setCourseId] = useState("");
   const [selectedLearners, setSelectedLearners] = useState([]);
+  const [moduleAvailability, setModuleAvailability] = useState({});
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const selectedCourse = courses.find((course) => course.id === courseId);
 
   function toggleLearner(id) {
     setSelectedLearners((current) => current.includes(id) ? current.filter((learnerId) => learnerId !== id) : [...current, id]);
@@ -212,10 +217,11 @@ function CourseAllocationPanel({ learners, courses, onAllocated }) {
     setError("");
     setMessage("");
     try {
-      const result = await api.post("/school-admin/course-allocations", { course_id: courseId, learner_ids: selectedLearners });
+      const result = await api.post("/school-admin/course-allocations", { course_id: courseId, learner_ids: selectedLearners, module_availability: moduleAvailability });
       setMessage(`${result.count} learner allocations saved.`);
       setSelectedLearners([]);
       setCourseId("");
+      setModuleAvailability({});
       onAllocated();
     } catch (err) {
       setError(err.message);
@@ -226,7 +232,14 @@ function CourseAllocationPanel({ learners, courses, onAllocated }) {
     <section className="panel compact-panel">
       <h2>Bulk Allocate Course</h2>
       <form className="allocation-form" onSubmit={allocate}>
-        <label>Course<select value={courseId} onChange={(e) => setCourseId(e.target.value)} required><option value="">Select course</option>{courses.map((course) => <option key={course.id} value={course.id}>{course.name}</option>)}</select></label>
+        <label>Course<select value={courseId} onChange={(e) => { setCourseId(e.target.value); setModuleAvailability({}); }} required><option value="">Select course</option>{courses.map((course) => <option key={course.id} value={course.id}>{course.name}</option>)}</select></label>
+        {selectedCourse?.modules?.length ? (
+          <div className="module-availability-grid">
+            {selectedCourse.modules.map((module) => (
+              <label key={module.id}>Module {module.sort_order}: {module.name}<input type="datetime-local" value={moduleAvailability[module.id] || ""} onChange={(e) => setModuleAvailability({ ...moduleAvailability, [module.id]: e.target.value })} /></label>
+            ))}
+          </div>
+        ) : null}
         <div className="learner-check-grid">
           {learners.length ? learners.map((learner) => (
             <label className="check-row" key={learner.id}>
@@ -418,7 +431,8 @@ function QuizAssignmentPanel({ globalQuizzes, schoolQuizzes, assignments, perfor
 }
 
 function TypingTestPanel({ globalTests, schoolTests, assignments, performance, onRefresh }) {
-  const [form, setForm] = useState({ title: "", passage: "", duration_seconds: 300, grade_levels: [1] });
+  const [form, setForm] = useState({ title: "", passage: "", duration_seconds: 300, max_attempts: 3, grade_levels: [1] });
+  const [editingTestId, setEditingTestId] = useState("");
   const [selectedTestId, setSelectedTestId] = useState("");
   const [grades, setGrades] = useState([]);
   const [availableFrom, setAvailableFrom] = useState("");
@@ -428,21 +442,45 @@ function TypingTestPanel({ globalTests, schoolTests, assignments, performance, o
   const allTests = [...globalTests, ...schoolTests];
   const selectedTest = allTests.find((test) => test.id === selectedTestId);
 
-  async function createTest(event) {
+  async function saveTest(event) {
     event.preventDefault();
     setError("");
     setMessage("");
     try {
-      await api.post("/school-admin/typing/school-tests", {
+      const payload = {
         ...form,
         duration_seconds: Number(form.duration_seconds || 300)
-      });
-      setForm({ title: "", passage: "", duration_seconds: 300, grade_levels: [1] });
-      setMessage("Typing test created.");
+      };
+      if (editingTestId) {
+        await api.patch(`/school-admin/typing/school-tests/${editingTestId}`, payload);
+      } else {
+        await api.post("/school-admin/typing/school-tests", payload);
+      }
+      setForm({ title: "", passage: "", duration_seconds: 300, max_attempts: 3, grade_levels: [1] });
+      setEditingTestId("");
+      setMessage(editingTestId ? "Typing test updated." : "Typing test created.");
       onRefresh();
     } catch (err) {
       setError(err.message);
     }
+  }
+
+  function editTest(test) {
+    setEditingTestId(test.id);
+    setForm({
+      title: test.title || "",
+      passage: test.passage || "",
+      duration_seconds: Number(test.duration_seconds || 300),
+      max_attempts: Number(test.max_attempts || 3),
+      grade_levels: test.grade_levels?.length ? test.grade_levels : [1]
+    });
+    setMessage("");
+    setError("");
+  }
+
+  function cancelEdit() {
+    setEditingTestId("");
+    setForm({ title: "", passage: "", duration_seconds: 300, max_attempts: 3, grade_levels: [1] });
   }
 
   async function assignTest(event) {
@@ -469,14 +507,26 @@ function TypingTestPanel({ globalTests, schoolTests, assignments, performance, o
   return (
     <div className="quiz-school-grid">
       <section className="panel compact-panel">
-        <h3>Create School Typing Test</h3>
-        <form className="school-form" onSubmit={createTest}>
+        <h3>{editingTestId ? "Edit School Typing Test" : "Create School Typing Test"}</h3>
+        <form className="school-form" onSubmit={saveTest}>
           <label>Title<input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} required /></label>
           <label>Passage<textarea value={form.passage} onChange={(e) => setForm({ ...form, passage: e.target.value })} required /></label>
           <label>Duration seconds<input type="number" min="30" max="1800" value={form.duration_seconds} onChange={(e) => setForm({ ...form, duration_seconds: e.target.value })} /></label>
+          <label>Attempts allowed<input type="number" min="1" max="20" value={form.max_attempts} onChange={(e) => setForm({ ...form, max_attempts: e.target.value })} /></label>
           <GradeChecks value={form.grade_levels} onChange={(gradeLevels) => setForm({ ...form, grade_levels: gradeLevels })} />
-          <button type="submit"><Plus size={16} />Create typing test</button>
+          <button type="submit"><Plus size={16} />{editingTestId ? "Save typing test" : "Create typing test"}</button>
+          {editingTestId ? <button type="button" className="secondary-button" onClick={cancelEdit}>Cancel edit</button> : null}
         </form>
+      </section>
+      <section className="panel compact-panel">
+        <h3>School Typing Tests</h3>
+        <DataTable rows={schoolTests} emptyTitle="No school typing tests yet" columns={[
+          { key: "title", label: "Test" },
+          { key: "duration_seconds", label: "Seconds" },
+          { key: "max_attempts", label: "Attempts" },
+          { key: "grade_levels", label: "Grades", render: (row) => row.grade_levels?.join("-") || "-" },
+          { key: "action", label: "Action", render: (row) => <button type="button" onClick={() => editTest(row)}>Edit</button> }
+        ]} />
       </section>
       <section className="panel compact-panel">
         <h3>Assign Typing Test</h3>
@@ -495,7 +545,9 @@ function TypingTestPanel({ globalTests, schoolTests, assignments, performance, o
         <h3>Typing Assignments</h3>
         <DataTable rows={assignments} emptyTitle="No typing tests assigned yet" columns={[
           { key: "title", label: "Test" },
+          { key: "is_global", label: "Scope", render: (row) => row.is_global ? "Global" : "School" },
           { key: "grade", label: "Grade" },
+          { key: "max_attempts", label: "Attempts" },
           { key: "learner_count", label: "Learners" },
           { key: "available_until", label: "Available until", render: (row) => row.available_until ? formatDate(row.available_until) : "Open" }
         ]} />
@@ -760,6 +812,7 @@ function PreferencesPanel({ preferences, streams, onRefresh }) {
 
 export default function SchoolAdminDashboard() {
   const [activeTab, setActiveTab] = useState("overview");
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [user, setUser] = useState(null);
   const [state, setState] = useState({
     profile: null,
@@ -793,6 +846,7 @@ export default function SchoolAdminDashboard() {
     const term = state.summary?.active_term;
     return term ? `${term.year} - ${term.name}` : "No active term";
   }, [state.summary]);
+  const activeCourse = useMemo(() => state.courses.find((course) => activeTab === `course:${course.id}`), [activeTab, state.courses]);
 
   async function loadDashboard() {
     setLoading(true);
@@ -901,7 +955,7 @@ export default function SchoolAdminDashboard() {
   }, []);
 
   return (
-    <main className="school-shell">
+    <main className={`school-shell ${sidebarOpen ? "" : "sidebar-collapsed"}`}>
       <aside className="school-sidebar">
         <div className="school-brand">
           <Sparkles size={28} />
@@ -910,13 +964,30 @@ export default function SchoolAdminDashboard() {
             <span>School Admin</span>
           </div>
         </div>
+        <button type="button" className="sidebar-toggle" onClick={() => setSidebarOpen((open) => !open)} title={sidebarOpen ? "Hide sidebar" : "Show sidebar"}>
+          {sidebarOpen ? <PanelLeftClose size={18} /> : <PanelLeftOpen size={18} />}
+          <span>{sidebarOpen ? "Hide" : "Show"}</span>
+        </button>
         <nav>
           {tabs.map((tab) => {
             const Icon = tab.icon;
-            return <button key={tab.id} className={activeTab === tab.id ? "active" : ""} onClick={() => setActiveTab(tab.id)}><Icon size={18} />{tab.label}</button>;
+            return (
+              <div key={tab.id} className="nav-group">
+                <button className={activeTab === tab.id ? "active" : ""} onClick={() => setActiveTab(tab.id)}><Icon size={18} /><span>{tab.label}</span></button>
+                {tab.id === "courses" && sidebarOpen ? (
+                  <div className="course-subnav">
+                    {state.courses.map((course) => (
+                      <button key={course.id} type="button" className={activeTab === `course:${course.id}` ? "active" : ""} onClick={() => setActiveTab(`course:${course.id}`)}>
+                        <span>{course.name}</span>
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            );
           })}
         </nav>
-        <button className="logout-button" onClick={logout}><LogOut size={18} />Sign out</button>
+        <button className="logout-button" onClick={logout}><LogOut size={18} /><span>Sign out</span></button>
       </aside>
 
       <section className="school-main">
@@ -1006,6 +1077,35 @@ export default function SchoolAdminDashboard() {
             </div>
             <CourseAllocationPanel learners={state.learners} courses={state.courses} onAllocated={loadDashboard} />
             <EmptyState title="Term workflow controls are staged" detail="The dashboard reads active term data now. The next build pass will wire the term enrolment wizard actions." />
+          </section>
+        )}
+
+        {!loading && activeTab === "courses" && (
+          <section className="panel">
+            <h2>Courses</h2>
+            <DataTable rows={state.courses} emptyTitle="No courses available yet" columns={[
+              { key: "name", label: "Course" },
+              { key: "is_coming_soon", label: "Status", render: (row) => row.is_coming_soon ? "Program under development" : "Available" },
+              { key: "action", label: "Open", render: (row) => <button type="button" onClick={() => setActiveTab(`course:${row.id}`)}>Open</button> }
+            ]} />
+          </section>
+        )}
+
+        {!loading && activeCourse && (
+          <section className="panel">
+            <h2>{activeCourse.name}</h2>
+            {activeCourse.name === "Web development" ? (
+              <div className="module-card-grid">
+                {(activeCourse.modules || []).map((module) => (
+                  <article className="module-card" key={module.id}>
+                    <span>Module {module.sort_order}</span>
+                    <h3>{module.name}</h3>
+                    <p>{module.objectives}</p>
+                    <strong>{module.badge_name} · {module.xp_points} XP</strong>
+                  </article>
+                ))}
+              </div>
+            ) : <p className="helper-text">Program under development coming soon.</p>}
           </section>
         )}
 

@@ -42,6 +42,23 @@
   gap: 6px;
 }
 
+.nav-group {
+  display: grid;
+  gap: 4px;
+}
+
+.course-subnav {
+  display: grid;
+  gap: 3px;
+  padding-left: 16px;
+}
+
+.course-subnav button {
+  min-height: 34px;
+  font-size: 0.86rem;
+  color: #dce5f2;
+}
+
 .admin-sidebar button,
 .logout-button {
   border: 0;
@@ -60,6 +77,34 @@
 .admin-sidebar button:hover,
 .admin-sidebar button.active {
   background: rgba(255, 255, 255, 0.14);
+}
+
+.sidebar-toggle {
+  justify-content: center;
+  border: 1px solid rgba(255,255,255,0.14) !important;
+  background: rgba(255,255,255,0.08) !important;
+}
+
+.admin-shell.sidebar-collapsed {
+  grid-template-columns: 76px minmax(0, 1fr);
+}
+
+.admin-shell.sidebar-collapsed .admin-sidebar {
+  padding-inline: 10px;
+}
+
+.admin-shell.sidebar-collapsed .brand-block div,
+.admin-shell.sidebar-collapsed .admin-sidebar nav span,
+.admin-shell.sidebar-collapsed .course-subnav,
+.admin-shell.sidebar-collapsed .logout-button span,
+.admin-shell.sidebar-collapsed .sidebar-toggle span {
+  display: none;
+}
+
+.admin-shell.sidebar-collapsed .admin-sidebar button,
+.admin-shell.sidebar-collapsed .logout-button {
+  justify-content: center;
+  padding-inline: 8px;
 }
 
 .logout-button {
@@ -433,7 +478,8 @@ button:disabled {
 }
 
 .quiz-school-grid {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
 }
 
 .helper-text {
@@ -487,6 +533,32 @@ button:disabled {
 .audit-panel {
   display: grid;
   gap: 16px;
+}
+
+.module-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+}
+
+.module-card {
+  border: 1px solid #dfe6ef;
+  border-radius: 8px;
+  padding: 16px;
+  background: #f8fbff;
+  display: grid;
+  gap: 8px;
+}
+
+.module-card h3,
+.module-card p {
+  margin: 0;
+}
+
+.module-card span,
+.module-card strong {
+  color: #2367d1;
+  font-size: 0.86rem;
 }
 
 .table-wrap {

@@ -39,11 +39,20 @@ router.get("/", async (req, res, next) => {
          from quiz_scores qs
        ),
        typing_ranked as (
-         select concat('typing-', tr.term_id, '-', tr.learner_id) as id, tr.learner_id, tr.school_id, tr.term_id,
-                'typing'::text as leaderboard_type, tr.wpm::numeric as score,
-                dense_rank() over (partition by tr.school_id, tr.term_id order by tr.wpm desc, tr.accuracy desc, tr.created_at asc)::int as rank,
-                tr.created_at
-         from typing_results tr
+         select concat('typing-', ts.term_id, '-', ts.learner_id) as id, ts.learner_id, ts.school_id, ts.term_id,
+                'typing'::text as leaderboard_type, ts.score,
+                dense_rank() over (partition by ts.school_id, ts.term_id order by ts.score desc, ts.accuracy desc, ts.created_at asc)::int as rank,
+                ts.created_at
+         from (
+           select distinct on (learner_id, school_id, term_id)
+                  learner_id, school_id, term_id, wpm::numeric as score, accuracy::numeric as accuracy, created_at
+           from (
+             select learner_id, school_id, term_id, wpm, accuracy, created_at from typing_results
+             union all
+             select learner_id, school_id, term_id, wpm, accuracy, created_at from typing_attempts
+           ) typing_source
+           order by learner_id, school_id, term_id, wpm desc, accuracy desc, created_at asc
+         ) ts
        ),
        stored_ranked as (
          select le.id::text, le.learner_id, le.school_id, le.term_id, le.leaderboard_type, le.score, le.rank, le.created_at
@@ -77,11 +86,20 @@ router.get("/", async (req, res, next) => {
          from quiz_scores qs
        ),
        typing_ranked as (
-         select concat('typing-', tr.term_id, '-', tr.learner_id) as id, tr.learner_id, tr.school_id, tr.term_id,
-                'typing'::text as leaderboard_type, tr.wpm::numeric as score,
-                dense_rank() over (partition by tr.school_id, tr.term_id order by tr.wpm desc, tr.accuracy desc, tr.created_at asc)::int as rank,
-                tr.created_at
-         from typing_results tr
+         select concat('typing-', ts.term_id, '-', ts.learner_id) as id, ts.learner_id, ts.school_id, ts.term_id,
+                'typing'::text as leaderboard_type, ts.score,
+                dense_rank() over (partition by ts.school_id, ts.term_id order by ts.score desc, ts.accuracy desc, ts.created_at asc)::int as rank,
+                ts.created_at
+         from (
+           select distinct on (learner_id, school_id, term_id)
+                  learner_id, school_id, term_id, wpm::numeric as score, accuracy::numeric as accuracy, created_at
+           from (
+             select learner_id, school_id, term_id, wpm, accuracy, created_at from typing_results
+             union all
+             select learner_id, school_id, term_id, wpm, accuracy, created_at from typing_attempts
+           ) typing_source
+           order by learner_id, school_id, term_id, wpm desc, accuracy desc, created_at asc
+         ) ts
        ),
        stored_ranked as (
          select le.id::text, le.learner_id, le.school_id, le.term_id, le.leaderboard_type, le.score, le.rank, le.created_at

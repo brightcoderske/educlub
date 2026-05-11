@@ -1,5 +1,6 @@
 const { one, query } = require("../config/database");
 const { recordAudit } = require("../utils/audit");
+const { ensureTypingColumns } = require("../utils/schemaGuard");
 
 function assertStudent(user) {
   if (!user || user.role !== "student") {
@@ -42,14 +43,14 @@ function rankRows(rows, scoreKey = "score") {
 
 function typingMetrics(passage, typedText, elapsedSeconds) {
   const expected = String(passage || "");
-  const typed = String(typedText || "");
+  const typed = String(typedText || "").slice(0, expected.length);
   const seconds = Math.max(Number(elapsedSeconds || 0), 1);
   let correctCharacters = 0;
   for (let index = 0; index < typed.length; index += 1) {
     if (typed[index] === expected[index]) correctCharacters += 1;
   }
   const accuracy = typed.length ? (correctCharacters / typed.length) * 100 : 0;
-  const wpm = (correctCharacters / 5) / (seconds / 60);
+  const wpm = Math.min((correctCharacters / 5) / (seconds / 60), 250);
   return {
     wpm: Math.round(wpm * 100) / 100,
     accuracy: Math.round(accuracy * 100) / 100,
@@ -92,7 +93,7 @@ async function dashboard(user, params = {}) {
   const termId = params.term_id || activeTerm?.id || null;
   const profileId = learner.learner_profile_id || null;
 
-  const [courses, progress, typing, quizzes, reports, leaderboards, submissions, assignedQuizzes, assignedTypingTests, quizTrend, typingTrend, quizLeaders] = await Promise.all([
+  const [courses, progress, typing, quizzes, reports, leaderboards, submissions, assignedQuizzes, assignedTypingTests, quizTrend, typingTrend, quizLeaders, typingLeaders] = await Promise.all([
     query(
       `select e.id as enrolment_id, e.status, e.created_at, e.term_id,
               coalesce(c.name, c.title) as course_name, c.id as course_id, c.club, coalesce(c.objectives, c.description) as objectives,
@@ -189,7 +190,7 @@ async function dashboard(user, params = {}) {
     ),
     query(
       `select ta.id as assignment_id, ta.typing_test_id, ta.grade, ta.assigned_at, ta.available_from, ta.available_until,
-              tt.title, tt.duration_seconds, tt.grade_levels,
+              tt.title, tt.duration_seconds, tt.grade_levels, tt.max_attempts,
               count(at.id)::int as attempts_used,
               max(at.wpm)::numeric as best_wpm,
               max(at.accuracy)::numeric as best_accuracy
@@ -240,6 +241,41 @@ async function dashboard(user, params = {}) {
        group by qa.learner_id, coalesce(u.full_name, u.name), u.grade, u.stream
        order by max(qa.score) desc, avg(qa.score) desc, max(qa.created_at) asc`,
       [learner.school_id, termId]
+    ),
+    query(
+      `select ts.learner_id, coalesce(u.full_name, u.name) as learner_name, u.grade, u.stream,
+              ts.best_wpm, ts.best_accuracy, ts.attempts, ts.created_at
+       from (
+         select best.learner_id, best.school_id, best.term_id,
+                best.wpm::numeric as best_wpm,
+                best.accuracy::numeric as best_accuracy,
+                counts.attempts,
+                best.created_at
+         from (
+           select distinct on (learner_id, school_id, term_id)
+                  learner_id, school_id, term_id, wpm, accuracy, created_at
+           from (
+             select learner_id, school_id, term_id, wpm, accuracy, created_at from typing_results
+             union all
+             select learner_id, school_id, term_id, wpm, accuracy, created_at from typing_attempts
+           ) typing_source
+           where school_id = $1 and ($2::uuid is null or term_id = $2)
+           order by learner_id, school_id, term_id, wpm desc, accuracy desc, created_at asc
+         ) best
+         join (
+           select learner_id, school_id, term_id, count(*)::int as attempts
+           from (
+             select learner_id, school_id, term_id from typing_results
+             union all
+             select learner_id, school_id, term_id from typing_attempts
+           ) typing_source
+           where school_id = $1 and ($2::uuid is null or term_id = $2)
+           group by learner_id, school_id, term_id
+         ) counts on counts.learner_id = best.learner_id and counts.school_id = best.school_id and counts.term_id = best.term_id
+       ) ts
+       join users u on u.id = ts.learner_id
+       order by ts.best_wpm desc, ts.best_accuracy desc, ts.created_at asc`,
+      [learner.school_id, termId]
     )
   ]);
 
@@ -268,9 +304,24 @@ async function dashboard(user, params = {}) {
     created_at: row.created_at
   }))).filter((row) => row.learner_id === learner.id);
 
+  const dynamicTypingLeaderboard = rankRows(typingLeaders.rows.map((row) => ({
+    id: `typing-${termId || "all"}-${row.learner_id}`,
+    term_id: termId,
+    leaderboard_type: "typing",
+    score: row.best_wpm,
+    best_accuracy: row.best_accuracy,
+    attempts: row.attempts,
+    learner_id: row.learner_id,
+    learner_name: row.learner_name,
+    grade: row.grade,
+    stream: row.stream,
+    created_at: row.created_at
+  }))).filter((row) => row.learner_id === learner.id);
+
   const leaderboardRows = [
     ...leaderboards.rows,
-    ...dynamicQuizLeaderboard.filter((row) => !leaderboards.rows.some((entry) => entry.leaderboard_type === "quiz"))
+    ...dynamicQuizLeaderboard.filter((row) => !leaderboards.rows.some((entry) => entry.leaderboard_type === "quiz")),
+    ...dynamicTypingLeaderboard.filter((row) => !leaderboards.rows.some((entry) => entry.leaderboard_type === "typing"))
   ];
 
   const reportCard = {
@@ -453,11 +504,12 @@ async function submitQuizAttempt(user, quizId, payload = {}) {
 }
 
 async function typingTestForTaking(user, testId) {
+  await ensureTypingColumns({ query });
   const { learner, activeTerm } = await learnerContext(user);
   const termId = activeTerm?.id || null;
   const assignment = await one(
     `select ta.id, ta.term_id, ta.available_from, ta.available_until,
-            tt.id as typing_test_id, tt.title, tt.passage, tt.duration_seconds
+            tt.id as typing_test_id, tt.title, tt.passage, tt.duration_seconds, tt.max_attempts
      from typing_assignments ta
      join typing_tests tt on tt.id = ta.typing_test_id
      where ta.school_id = $1 and ta.typing_test_id = $2 and ta.grade = $3 and ta.is_active = true
@@ -487,10 +539,11 @@ async function typingTestForTaking(user, testId) {
 }
 
 async function submitTypingAttempt(user, testId, payload = {}) {
+  await ensureTypingColumns({ query });
   const { learner, activeTerm } = await learnerContext(user);
   const termId = activeTerm?.id || null;
   const assignment = await one(
-    `select ta.id, ta.term_id, tt.id as typing_test_id, tt.title, tt.passage
+    `select ta.id, ta.term_id, tt.id as typing_test_id, tt.title, tt.passage, tt.duration_seconds, tt.max_attempts
      from typing_assignments ta
      join typing_tests tt on tt.id = ta.typing_test_id
      where ta.school_id = $1 and ta.typing_test_id = $2 and ta.grade = $3 and ta.is_active = true
@@ -505,13 +558,30 @@ async function submitTypingAttempt(user, testId, payload = {}) {
     error.statusCode = 404;
     throw error;
   }
-  const typedText = String(payload.typed_text || "");
-  const metrics = typingMetrics(assignment.passage, typedText, payload.time_taken_seconds);
+  const attempts = await one(
+    "select count(*)::int as count from typing_attempts where assignment_id = $1 and learner_id = $2",
+    [assignment.id, learner.id]
+  );
+  if (attempts.count >= Number(assignment.max_attempts || 3)) {
+    const error = new Error("You have used all attempts for this typing test");
+    error.statusCode = 400;
+    throw error;
+  }
+  const expected = String(assignment.passage || "");
+  const typedText = String(payload.typed_text || "").slice(0, expected.length);
+  const requestedSeconds = Number(payload.time_taken_seconds || 0);
+  const durationSeconds = Math.max(Number(assignment.duration_seconds || 300), 1);
+  const fastestAllowedSeconds = Math.ceil((typedText.length / 5 / 250) * 60);
+  const elapsedSeconds = Math.min(
+    Math.max(requestedSeconds || durationSeconds, fastestAllowedSeconds, 1),
+    durationSeconds
+  );
+  const metrics = typingMetrics(expected, typedText, elapsedSeconds);
   const saved = await one(
     `insert into typing_attempts (
-       typing_test_id, assignment_id, learner_id, school_id, term_id, wpm, accuracy, time_taken_seconds, typed_text
+       typing_test_id, assignment_id, learner_id, school_id, term_id, wpm, accuracy, time_taken_seconds, typed_text, raw_answer
      )
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
      returning id, typing_test_id, wpm, accuracy, time_taken_seconds, created_at`,
     [
       assignment.typing_test_id,
@@ -522,6 +592,7 @@ async function submitTypingAttempt(user, testId, payload = {}) {
       metrics.wpm,
       metrics.accuracy,
       metrics.timeTakenSeconds,
+      typedText,
       typedText
     ]
   );
@@ -537,11 +608,123 @@ async function submitTypingAttempt(user, testId, payload = {}) {
   return saved;
 }
 
+async function courseForLearning(user, courseId) {
+  const { learner, activeTerm } = await learnerContext(user);
+  const termId = activeTerm?.id || null;
+  const enrolment = await one(
+    `select e.id, e.course_id, c.name, c.title, c.objectives, c.description, c.is_coming_soon
+     from enrolments e
+     join courses c on c.id = e.course_id
+     where e.school_id = $1 and e.learner_id = $2 and e.course_id = $3
+       and ($4::uuid is null or e.term_id = $4) and e.status = 'active'`,
+    [learner.school_id, learner.learner_profile_id, courseId, termId]
+  );
+  if (!enrolment) {
+    const error = new Error("Course is not allocated to you for this term");
+    error.statusCode = 404;
+    throw error;
+  }
+  const modules = await query(
+    `select m.id, m.course_id, coalesce(m.name, m.title) as name, coalesce(m.objectives, m.description) as objectives, m.sort_order, m.badge_name, m.xp_points,
+            coalesce(cma.available_from, m.available_from) as available_from
+     from modules m
+     left join course_module_availability cma on cma.module_id = m.id and cma.school_id = $2
+     where m.course_id = $1
+     order by m.sort_order`,
+    [courseId, learner.school_id]
+  );
+  const lessons = await query(
+    `select l.id, l.module_id, coalesce(l.name, l.title) as name,
+            coalesce(l.learning_notes, l.description, l.content->>'notes') as content,
+            l.example,
+            coalesce(l.learning_notes, l.description, l.content->>'notes') as learning_notes,
+            l.practice_prompt,
+            l.starter_code, l.homework_prompt, l.creativity_prompt, l.quiz, l.xp_points, l.sort_order,
+            lp.score, lp.completed_at, lp.practice_code, lp.homework_code, lp.creativity_code, lp.quiz_answers, lp.xp_points as earned_xp
+     from lessons l
+     join modules m on m.id = l.module_id
+     left join lesson_progress lp on lp.lesson_id = l.id and lp.learner_id = $2
+     where m.course_id = $1
+     order by m.sort_order, l.sort_order`,
+    [courseId, learner.id]
+  );
+  return {
+    id: enrolment.course_id,
+    name: enrolment.name || enrolment.title,
+    objectives: enrolment.objectives || enrolment.description,
+    is_coming_soon: enrolment.is_coming_soon,
+    modules: modules.rows.map((module) => ({
+      ...module,
+      is_locked: module.available_from ? new Date(module.available_from) > new Date() : false,
+      lessons: lessons.rows.filter((lesson) => lesson.module_id === module.id)
+    }))
+  };
+}
+
+async function saveLessonProgress(user, lessonId, payload = {}) {
+  const { learner, activeTerm } = await learnerContext(user);
+  const termId = activeTerm?.id || null;
+  const lesson = await one(
+    `select l.id, l.module_id, l.quiz, l.xp_points, m.course_id
+     from lessons l
+     join modules m on m.id = l.module_id
+     join enrolments e on e.course_id = m.course_id and e.school_id = $2 and e.learner_id = $3
+     where l.id = $1 and ($4::uuid is null or e.term_id = $4) and e.status = 'active'`,
+    [lessonId, learner.school_id, learner.learner_profile_id, termId]
+  );
+  if (!lesson) {
+    const error = new Error("Lesson is not available to you");
+    error.statusCode = 404;
+    throw error;
+  }
+  const answers = payload.quiz_answers || {};
+  const questions = Array.isArray(lesson.quiz) ? lesson.quiz : [];
+  let score = payload.score === undefined ? null : Number(payload.score);
+  if (questions.length && payload.submit_quiz) {
+    const correct = questions.filter((question, index) => String(answers[index] || "").trim() === String(question.answer || "").trim()).length;
+    score = Math.round((correct / questions.length) * 10000) / 100;
+  }
+  const completed = payload.completed || payload.submit_quiz || score !== null;
+  const saved = await one(
+    `insert into lesson_progress (
+       learner_id, course_id, module_id, lesson_id, score, completed_at, practice_code,
+       homework_code, creativity_code, quiz_answers, xp_points, updated_at
+     )
+     values ($1, $2, $3, $4, $5, case when $6 then now() else null end, $7, $8, $9, $10, $11, now())
+     on conflict (learner_id, lesson_id) do update set
+       score = coalesce(excluded.score, lesson_progress.score),
+       completed_at = coalesce(excluded.completed_at, lesson_progress.completed_at),
+       practice_code = excluded.practice_code,
+       homework_code = excluded.homework_code,
+       creativity_code = excluded.creativity_code,
+       quiz_answers = excluded.quiz_answers,
+       xp_points = greatest(lesson_progress.xp_points, excluded.xp_points),
+       updated_at = now()
+     returning id, score, completed_at, practice_code, homework_code, creativity_code, quiz_answers, xp_points`,
+    [
+      learner.id,
+      lesson.course_id,
+      lesson.module_id,
+      lesson.id,
+      score,
+      Boolean(completed),
+      payload.practice_code || "",
+      payload.homework_code || "",
+      payload.creativity_code || "",
+      answers,
+      completed ? Number(lesson.xp_points || 20) : 0
+    ]
+  );
+  return saved;
+}
+
 module.exports = {
   assertStudent,
   dashboard,
   quizForTaking,
   submitQuizAttempt,
   typingTestForTaking,
-  submitTypingAttempt
+  submitTypingAttempt,
+  courseForLearning,
+  saveLessonProgress
 };

@@ -1,6 +1,8 @@
 const bcrypt = require("bcryptjs");
 const { one, list, query, pagination, transaction } = require("../config/database");
 const { recordAudit } = require("../utils/audit");
+const { ensureDefaultCourses } = require("../utils/courseSeed");
+const { ensureTypingColumns } = require("../utils/schemaGuard");
 
 function assertSchoolAdmin(user) {
   if (!user || user.role !== "school_admin") {
@@ -114,7 +116,12 @@ async function dashboardSummary(user, params = {}) {
     ),
     one(
       `select avg(wpm)::numeric as average_wpm, avg(accuracy)::numeric as average_accuracy, count(*)::int as count
-       from typing_results where school_id = $1 and ($2::uuid is null or term_id = $2)`,
+       from (
+         select school_id, term_id, wpm, accuracy from typing_results
+         union all
+         select school_id, term_id, wpm, accuracy from typing_attempts
+       ) typing
+       where school_id = $1 and ($2::uuid is null or term_id = $2)`,
       [schoolId, termId]
     ),
     one(
@@ -544,6 +551,7 @@ function normalizeTypingTestPayload(payload = {}) {
     title,
     passage,
     durationSeconds: Math.min(Math.max(Number(payload.duration_seconds || 300), 30), 1800),
+    maxAttempts: Math.min(Math.max(Number(payload.max_attempts || 3), 1), 20),
     gradeLevels: normalizeGrades(payload.grade_levels || [1]),
     isPublished: payload.is_published !== false
   };
@@ -551,8 +559,9 @@ function normalizeTypingTestPayload(payload = {}) {
 
 async function globalTypingTests(user) {
   scopedSchoolId(user);
+  await ensureTypingColumns({ query });
   const result = await query(
-    `select id, title, duration_seconds, grade_levels, is_global, is_published, created_at,
+    `select id, title, duration_seconds, max_attempts, grade_levels, is_global, is_published, created_at,
             left(passage, 140) as passage_preview
      from typing_tests
      where is_global = true and is_published = true and deleted_at is null
@@ -563,9 +572,10 @@ async function globalTypingTests(user) {
 
 async function schoolTypingTests(user) {
   const schoolId = scopedSchoolId(user);
+  await ensureTypingColumns({ query });
   const result = await query(
-    `select id, title, duration_seconds, grade_levels, is_global, is_published, created_at,
-            left(passage, 140) as passage_preview
+    `select id, title, duration_seconds, max_attempts, grade_levels, is_global, is_published, created_at,
+            passage, left(passage, 140) as passage_preview
      from typing_tests
      where school_id = $1 and is_global = false and deleted_at is null
      order by created_at desc`,
@@ -578,14 +588,41 @@ async function createSchoolTypingTest(user, payload) {
   const schoolId = scopedSchoolId(user);
   const normalized = normalizeTypingTestPayload(payload);
   const test = await one(
-    `insert into typing_tests (school_id, title, passage, duration_seconds, grade_levels, is_global, is_published, created_by)
-     values ($1, $2, $3, $4, $5, false, $6, $7)
-     returning id, title, passage, duration_seconds, grade_levels, is_global, is_published, created_at`,
-    [schoolId, normalized.title, normalized.passage, normalized.durationSeconds, normalized.gradeLevels, normalized.isPublished, user.sub]
+    `insert into typing_tests (school_id, title, passage, duration_seconds, max_attempts, grade_levels, is_global, is_published, created_by)
+     values ($1, $2, $3, $4, $5, $6, false, $7, $8)
+     returning id, title, passage, duration_seconds, max_attempts, grade_levels, is_global, is_published, created_at`,
+    [schoolId, normalized.title, normalized.passage, normalized.durationSeconds, normalized.maxAttempts, normalized.gradeLevels, normalized.isPublished, user.sub]
   );
   await recordAudit({
     actor: user,
     action: "typing.create_school",
+    targetType: "typing_test",
+    targetId: test.id,
+    schoolId,
+    metadata: { title: test.title, grade_levels: test.grade_levels }
+  });
+  return test;
+}
+
+async function updateSchoolTypingTest(user, testId, payload) {
+  const schoolId = scopedSchoolId(user);
+  const normalized = normalizeTypingTestPayload(payload);
+  const test = await one(
+    `update typing_tests
+     set title = $3, passage = $4, duration_seconds = $5, max_attempts = $6, grade_levels = $7,
+         is_published = $8, updated_at = now()
+     where id = $1 and school_id = $2 and is_global = false and deleted_at is null
+     returning id, title, passage, duration_seconds, max_attempts, grade_levels, is_global, is_published, created_at, updated_at`,
+    [testId, schoolId, normalized.title, normalized.passage, normalized.durationSeconds, normalized.maxAttempts, normalized.gradeLevels, normalized.isPublished]
+  );
+  if (!test) {
+    const error = new Error("Typing test not found or not available to this school");
+    error.statusCode = 404;
+    throw error;
+  }
+  await recordAudit({
+    actor: user,
+    action: "typing.update_school",
     targetType: "typing_test",
     targetId: test.id,
     schoolId,
@@ -658,7 +695,7 @@ async function typingAssignments(user, params = {}) {
   const termId = params.term_id || null;
   const result = await query(
     `select ta.id, ta.typing_test_id, ta.term_id, ta.grade, ta.is_active, ta.available_from, ta.available_until, ta.assigned_at,
-            tt.title, tt.duration_seconds, tt.grade_levels, tt.is_global,
+            tt.title, tt.duration_seconds, tt.max_attempts, tt.grade_levels, tt.is_global,
             count(distinct u.id)::int as learner_count,
             count(distinct at.id)::int as attempts
      from typing_assignments ta
@@ -983,12 +1020,21 @@ async function leaderboards(user, params = {}) {
        from quiz_scores qs
      ),
      typing_ranked as (
-       select concat('typing-', tr.term_id, '-', tr.learner_id) as id, tr.learner_id, tr.school_id, tr.term_id,
-              'typing'::text as leaderboard_type, tr.wpm::numeric as score,
-              dense_rank() over (partition by tr.school_id, tr.term_id order by tr.wpm desc, tr.accuracy desc, tr.created_at asc)::int as rank,
-              tr.created_at
-       from typing_results tr
-       where tr.school_id = $1 and ($2::uuid is null or tr.term_id = $2)
+       select concat('typing-', ts.term_id, '-', ts.learner_id) as id, ts.learner_id, ts.school_id, ts.term_id,
+              'typing'::text as leaderboard_type, ts.score,
+              dense_rank() over (partition by ts.school_id, ts.term_id order by ts.score desc, ts.accuracy desc, ts.created_at asc)::int as rank,
+              ts.created_at
+       from (
+         select distinct on (learner_id, school_id, term_id)
+                learner_id, school_id, term_id, wpm::numeric as score, accuracy::numeric as accuracy, created_at
+         from (
+           select learner_id, school_id, term_id, wpm, accuracy, created_at from typing_results
+           union all
+           select learner_id, school_id, term_id, wpm, accuracy, created_at from typing_attempts
+         ) typing_source
+         where school_id = $1 and ($2::uuid is null or term_id = $2)
+         order by learner_id, school_id, term_id, wpm desc, accuracy desc, created_at asc
+       ) ts
      ),
      stored_ranked as (
        select le.id::text, le.learner_id, le.school_id, le.term_id, le.leaderboard_type, le.score, le.rank, le.created_at
@@ -1010,7 +1056,16 @@ async function leaderboards(user, params = {}) {
     `select (
        (select count(*) from leaderboard_entries where school_id = $1 and ($2::uuid is null or term_id = $2) and leaderboard_type not in ('quiz', 'typing')) +
        (select count(*) from (select learner_id, term_id from quiz_attempts where school_id = $1 and ($2::uuid is null or term_id = $2) group by learner_id, term_id) q) +
-       (select count(*) from typing_results where school_id = $1 and ($2::uuid is null or term_id = $2))
+       (select count(*) from (
+         select learner_id, term_id
+         from (
+           select learner_id, school_id, term_id from typing_results
+           union all
+           select learner_id, school_id, term_id from typing_attempts
+         ) typing_source
+         where school_id = $1 and ($2::uuid is null or term_id = $2)
+         group by learner_id, term_id
+       ) t)
      ) as count`,
     [schoolId, termId]
   );
@@ -1186,8 +1241,16 @@ async function learnerDetail(user, learnerId, params = {}) {
       [schoolId, learnerId, termId]
     ),
     query(
-      `select tr.id, tr.wpm, tr.accuracy, tr.time_taken_seconds, tr.created_at, coalesce(t.label, t.name::text) as term_name, ay.year
-       from typing_results tr
+      `select tr.id, tr.wpm, tr.accuracy, tr.time_taken_seconds, tr.created_at, tt.title as test_title,
+              coalesce(t.label, t.name::text) as term_name, ay.year
+       from (
+         select id, learner_id, school_id, term_id, wpm, accuracy, time_taken_seconds, created_at, null::uuid as typing_test_id
+         from typing_results
+         union all
+         select id, learner_id, school_id, term_id, wpm, accuracy, time_taken_seconds, created_at, typing_test_id
+         from typing_attempts
+       ) tr
+       left join typing_tests tt on tt.id = tr.typing_test_id
        join terms t on t.id = tr.term_id
        join academic_years ay on ay.id = t.academic_year_id
        where tr.school_id = $1 and tr.learner_id = $2 and ($3::uuid is null or tr.term_id = $3)
@@ -1264,11 +1327,15 @@ async function learnerDetail(user, learnerId, params = {}) {
 
 async function availableCourses(user) {
   scopedSchoolId(user);
+  await ensureDefaultCourses({ query });
   const result = await query(
-    `select id, coalesce(name, title) as name, club, coalesce(objectives, description) as objectives
-     from courses
-     where deleted_at is null and (is_published = true or status = 'published')
-     order by coalesce(name, title)`
+    `select c.id, coalesce(c.name, c.title) as name, c.club, coalesce(c.objectives, c.description) as objectives, c.is_coming_soon,
+            coalesce(json_agg(json_build_object('id', m.id, 'name', coalesce(m.name, m.title), 'sort_order', m.sort_order) order by m.sort_order) filter (where m.id is not null), '[]'::json) as modules
+     from courses c
+     left join modules m on m.course_id = c.id
+     where c.deleted_at is null and (c.is_published = true or c.status = 'published')
+     group by c.id
+     order by coalesce(c.name, c.title)`
   );
   return result.rows;
 }
@@ -1315,6 +1382,17 @@ async function bulkAllocateCourse(user, payload) {
       );
       inserted.push(result.rows[0]);
     }
+    const moduleAvailability = payload.module_availability || {};
+    for (const [moduleId, availableFrom] of Object.entries(moduleAvailability)) {
+      await client.query(
+        `insert into course_module_availability (school_id, course_id, module_id, available_from, created_by)
+         values ($1, $2, $3, $4, $5)
+         on conflict (school_id, module_id) do update set
+           available_from = excluded.available_from,
+           updated_at = now()`,
+        [schoolId, payload.course_id, moduleId, availableFrom || null, user.sub]
+      );
+    }
     await recordAudit({
       client,
       actor: user,
@@ -1350,6 +1428,7 @@ module.exports = {
   globalTypingTests,
   schoolTypingTests,
   createSchoolTypingTest,
+  updateSchoolTypingTest,
   assignTypingTest,
   typingAssignments,
   typingPerformance,

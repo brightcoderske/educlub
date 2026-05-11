@@ -162,8 +162,12 @@ create table if not exists courses (
 );
 
 alter table courses add column if not exists name text;
+alter table courses add column if not exists title text;
+alter table courses add column if not exists description text;
 alter table courses add column if not exists objectives text;
 alter table courses add column if not exists club text;
+alter table courses add column if not exists status text not null default 'draft';
+alter table courses add column if not exists is_coming_soon boolean not null default false;
 alter table courses add column if not exists is_published boolean not null default false;
 alter table courses add column if not exists published_at timestamptz;
 alter table courses add column if not exists deleted_at timestamptz;
@@ -182,11 +186,21 @@ create table if not exists modules (
   unique (course_id, sort_order)
 );
 
+alter table modules add column if not exists name text;
+alter table modules add column if not exists title text;
+alter table modules add column if not exists description text;
+alter table modules add column if not exists objectives text;
+alter table modules add column if not exists sort_order integer not null default 1;
+alter table modules add column if not exists pass_threshold numeric(5,2);
+alter table modules add column if not exists available_from timestamptz;
+alter table modules add column if not exists badge_name text;
+alter table modules add column if not exists xp_points integer not null default 50;
+
 create table if not exists lessons (
   id uuid primary key default gen_random_uuid(),
   module_id uuid not null references modules(id) on delete cascade,
   name text not null,
-  content text,
+  content jsonb not null default '{}'::jsonb,
   example text,
   video_url text,
   sort_order integer not null,
@@ -194,6 +208,20 @@ create table if not exists lessons (
   updated_at timestamptz not null default now(),
   unique (module_id, sort_order)
 );
+
+alter table lessons add column if not exists name text;
+alter table lessons add column if not exists title text;
+alter table lessons add column if not exists content jsonb not null default '{}'::jsonb;
+alter table lessons add column if not exists description text;
+alter table lessons add column if not exists example text;
+alter table lessons add column if not exists sort_order integer not null default 1;
+alter table lessons add column if not exists learning_notes text;
+alter table lessons add column if not exists practice_prompt text;
+alter table lessons add column if not exists starter_code text;
+alter table lessons add column if not exists homework_prompt text;
+alter table lessons add column if not exists creativity_prompt text;
+alter table lessons add column if not exists quiz jsonb not null default '[]'::jsonb;
+alter table lessons add column if not exists xp_points integer not null default 20;
 
 create table if not exists school_lesson_annotations (
   id uuid primary key default gen_random_uuid(),
@@ -239,6 +267,24 @@ create table if not exists lesson_progress (
   completed_at timestamptz,
   updated_at timestamptz not null default now(),
   unique (learner_id, lesson_id)
+);
+
+alter table lesson_progress add column if not exists practice_code text;
+alter table lesson_progress add column if not exists homework_code text;
+alter table lesson_progress add column if not exists creativity_code text;
+alter table lesson_progress add column if not exists quiz_answers jsonb not null default '{}'::jsonb;
+alter table lesson_progress add column if not exists xp_points integer not null default 0;
+
+create table if not exists course_module_availability (
+  id uuid primary key default gen_random_uuid(),
+  school_id uuid not null references schools(id) on delete cascade,
+  course_id uuid not null references courses(id) on delete cascade,
+  module_id uuid not null references modules(id) on delete cascade,
+  available_from timestamptz,
+  created_by uuid references users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (school_id, module_id)
 );
 
 create table if not exists quiz_questions (
@@ -361,6 +407,7 @@ alter table typing_tests add column if not exists title text;
 alter table typing_tests add column if not exists passage text;
 alter table typing_tests add column if not exists duration_seconds integer not null default 300;
 alter table typing_tests add column if not exists grade_levels integer[] not null default '{}';
+alter table typing_tests add column if not exists max_attempts integer not null default 3;
 alter table typing_tests add column if not exists is_global boolean not null default false;
 alter table typing_tests add column if not exists is_published boolean not null default true;
 alter table typing_tests add column if not exists created_by uuid references users(id) on delete set null;
@@ -415,6 +462,7 @@ alter table typing_attempts add column if not exists wpm numeric(6,2);
 alter table typing_attempts add column if not exists accuracy numeric(5,2);
 alter table typing_attempts add column if not exists time_taken_seconds integer;
 alter table typing_attempts add column if not exists typed_text text not null default '';
+alter table typing_attempts add column if not exists raw_answer text not null default '';
 alter table typing_attempts add column if not exists created_at timestamptz not null default now();
 
 create table if not exists submissions (
