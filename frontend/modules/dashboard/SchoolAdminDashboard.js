@@ -641,7 +641,7 @@ function exportLearnerReport(detail) {
   URL.revokeObjectURL(url);
 }
 
-function LearnerDetailPanel({ detail, streams, terms, onClose, onSaved, onTermChange }) {
+function LearnerDetailPanel({ detail, streams, terms, onClose, onSaved, onTermChange, setShowReportCard }) {
   const [form, setForm] = useState({
     full_name: detail.learner.full_name || "",
     grade: detail.learner.grade || "",
@@ -1084,7 +1084,7 @@ export default function SchoolAdminDashboard() {
               { key: "stream", label: "Stream", render: (row) => row.stream || "-" },
               { key: "parent_email", label: "Parent email", render: (row) => row.parent_email || "-" }
             ]} />
-            {learnerDetail ? <LearnerDetailPanel detail={learnerDetail} streams={state.streams} terms={state.terms} onClose={() => setLearnerDetail(null)} onSaved={refreshLearnerDetail} onTermChange={openLearnerDetail} /> : null}
+            {learnerDetail ? <LearnerDetailPanel detail={learnerDetail} streams={state.streams} terms={state.terms} onClose={() => setLearnerDetail(null)} onSaved={refreshLearnerDetail} onTermChange={openLearnerDetail} setShowReportCard={setShowReportCard} /> : null}
             {showReportCard && (
               <ReportCard
                 data={{
