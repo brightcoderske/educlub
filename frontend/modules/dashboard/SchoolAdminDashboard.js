@@ -235,8 +235,9 @@ function CourseAllocationPanel({ learners, courses, onAllocated }) {
         <label>Course<select value={courseId} onChange={(e) => { setCourseId(e.target.value); setModuleAvailability({}); }} required><option value="">Select course</option>{courses.map((course) => <option key={course.id} value={course.id}>{course.name}</option>)}</select></label>
         {selectedCourse?.modules?.length ? (
           <div className="module-availability-grid">
+            <p className="helper-text">Module dates are lock dates. Leave blank to open a module immediately; choose a date/time to keep that module closed until then.</p>
             {selectedCourse.modules.map((module) => (
-              <label key={module.id}>Module {module.sort_order}: {module.name}<input type="datetime-local" value={moduleAvailability[module.id] || ""} onChange={(e) => setModuleAvailability({ ...moduleAvailability, [module.id]: e.target.value })} /></label>
+              <label key={module.id}>Closed until: Module {module.sort_order} - {module.name}<input type="datetime-local" value={moduleAvailability[module.id] || ""} onChange={(e) => setModuleAvailability({ ...moduleAvailability, [module.id]: e.target.value })} /></label>
             ))}
           </div>
         ) : null}
@@ -839,6 +840,7 @@ export default function SchoolAdminDashboard() {
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [learnerFilters, setLearnerFilters] = useState({ search: "", grade: "", stream: "" });
   const [learnerDetail, setLearnerDetail] = useState(null);
 
@@ -944,6 +946,20 @@ export default function SchoolAdminDashboard() {
     }
   }
 
+  async function deallocateCourse(row) {
+    const confirmed = window.confirm(`Deallocate ${row.name} from all active learners this term?`);
+    if (!confirmed) return;
+    setError("");
+    setNotice("");
+    try {
+      const result = await api.delete(`/school-admin/course-allocations/${row.id}`);
+      setNotice(`${row.name} deallocated from ${result.count} learner${result.count === 1 ? "" : "s"} for the active term.`);
+      await loadDashboard();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
   useEffect(() => {
     const sessionUser = currentUser();
     if (!sessionUser || sessionUser.role !== "school_admin") {
@@ -1008,6 +1024,7 @@ export default function SchoolAdminDashboard() {
         </header>
 
         {error ? <div className="alert">{error}</div> : null}
+        {notice ? <div className="alert success-alert">{notice}</div> : null}
         {loading ? <div className="loading-block">Loading your school workspace...</div> : null}
 
         {!loading && activeTab === "overview" && (
@@ -1030,7 +1047,8 @@ export default function SchoolAdminDashboard() {
               <h2>Enrolment Per Course</h2>
               <DataTable rows={state.enrolment} emptyTitle="No course enrolments this term" columns={[
                 { key: "name", label: "Course" },
-                { key: "enrolment_count", label: "Learners" }
+                { key: "enrolment_count", label: "Learners" },
+                { key: "action", label: "Action", render: (row) => <button type="button" className="danger-button" onClick={() => deallocateCourse(row)}>Deallocate</button> }
               ]} />
             </section>
             <section className="panel">
