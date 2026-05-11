@@ -1,6 +1,6 @@
 const { one, query } = require("../config/database");
 const { recordAudit } = require("../utils/audit");
-const { ensureTypingColumns } = require("../utils/schemaGuard");
+const { ensureTypingColumns, ensureCourseBuilderSchema } = require("../utils/schemaGuard");
 
 function assertStudent(user) {
   if (!user || user.role !== "student") {
@@ -39,6 +39,149 @@ function rankRows(rows, scoreKey = "score") {
     previousRank = rank;
     return { ...row, score, rank };
   });
+}
+
+function parseJsonObject(value, fallback = {}) {
+  if (!value) return { ...fallback };
+  if (typeof value === "object") return { ...fallback, ...value };
+  try {
+    const parsed = JSON.parse(value);
+    return typeof parsed === "object" && parsed ? { ...fallback, ...parsed } : { ...fallback };
+  } catch {
+    return { ...fallback };
+  }
+}
+
+function inferPracticeLanguage(technology) {
+  const t = String(technology || "").toLowerCase();
+  if (t === "python") return "python";
+  if (t === "web") return "html";
+  if (t === "android" || t === "arduino" || t === "scratch" || t === "robotics") return "text";
+  if (t === "computer_basics") return "html";
+  return "html";
+}
+
+function blockStepTitle(activityType, payload, index) {
+  const p = parseJsonObject(payload);
+  if (p.title) return String(p.title);
+  const labels = {
+    learn_content: "Learn",
+    practice: "Practice",
+    creative_corner: "Creative corner",
+    teacher_task: "Class task",
+    quiz: "Quiz check",
+    submission: "Submit your work"
+  };
+  return labels[activityType] || `Activity ${index + 1}`;
+}
+
+function buildPlayerSteps(lesson, blocks, courseTechnology) {
+  const sortedBlocks = Array.isArray(blocks) ? [...blocks].sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0)) : [];
+  if (sortedBlocks.length) {
+    return sortedBlocks.map((b, idx) => ({
+      step_id: b.id,
+      source: "block",
+      activity_type: b.activity_type,
+      title: blockStepTitle(b.activity_type, b.payload, idx),
+      marks_weight: Number(b.marks_weight || 0),
+      payload: parseJsonObject(b.payload),
+      sort_order: Number(b.sort_order || idx + 1)
+    }));
+  }
+  const steps = [];
+  let order = 1;
+  const learnText = lesson.learning_notes || lesson.content || "";
+  if (String(learnText).trim()) {
+    steps.push({
+      step_id: "legacy:learn",
+      source: "legacy",
+      activity_type: "learn_content",
+      title: "Learn",
+      marks_weight: null,
+      payload: { richText: learnText, images: [], videoUrls: [], codeExample: lesson.example || "", teacherNotes: "" },
+      sort_order: order++
+    });
+  }
+  if (lesson.practice_prompt || lesson.starter_code || lesson.example) {
+    steps.push({
+      step_id: "legacy:practice",
+      source: "legacy",
+      activity_type: "practice",
+      title: "Practice",
+      marks_weight: null,
+      payload: {
+        language: inferPracticeLanguage(courseTechnology),
+        instructions: lesson.practice_prompt || "",
+        starterCode: String(lesson.starter_code || lesson.example || ""),
+        expectedHints: ""
+      },
+      sort_order: order++
+    });
+  }
+  if (lesson.homework_prompt) {
+    steps.push({
+      step_id: "legacy:homework",
+      source: "legacy",
+      activity_type: "submission",
+      title: "Home task",
+      marks_weight: null,
+      payload: {
+        instructions: lesson.homework_prompt,
+        allowCode: true,
+        allowText: true,
+        allowFile: false,
+        allowLink: false,
+        allowScreenshot: false
+      },
+      sort_order: order++
+    });
+  }
+  if (lesson.creativity_prompt) {
+    steps.push({
+      step_id: "legacy:creativity",
+      source: "legacy",
+      activity_type: "creative_corner",
+      title: "Creative corner",
+      marks_weight: null,
+      payload: { instructions: lesson.creativity_prompt },
+      sort_order: order++
+    });
+  }
+  const quizQuestions = Array.isArray(lesson.quiz) ? lesson.quiz : [];
+  if (quizQuestions.length) {
+    steps.push({
+      step_id: "legacy:quiz",
+      source: "legacy",
+      activity_type: "quiz",
+      title: "Quiz",
+      marks_weight: null,
+      payload: { questions: quizQuestions },
+      sort_order: order++
+    });
+  }
+  return steps;
+}
+
+function expectedQuizAnswer(question) {
+  if (!question) return "";
+  if (question.answer != null && question.answer !== "") return String(question.answer).trim();
+  if (Array.isArray(question.options) && question.correctIndex != null) {
+    return String(question.options[Number(question.correctIndex)] || "").trim();
+  }
+  return "";
+}
+
+function scoreQuizQuestions(questions, answers) {
+  if (!Array.isArray(questions) || !questions.length) return null;
+  const map = answers && typeof answers === "object" ? answers : {};
+  let correct = 0;
+  questions.forEach((question, index) => {
+    const given = map[index] ?? map[String(index)];
+    if (String(given || "").trim() === expectedQuizAnswer(question)) {
+      correct += 1;
+    }
+  });
+  return Math.round((correct / questions.length) * 10000) / 100;
 }
 
 function typingMetrics(passage, typedText, elapsedSeconds) {
@@ -609,11 +752,12 @@ async function submitTypingAttempt(user, testId, payload = {}) {
 }
 
 async function courseForLearning(user, courseId) {
+  await ensureCourseBuilderSchema({ query });
   const { learner, activeTerm } = await learnerContext(user);
   const termId = activeTerm?.id || null;
   const enrolmentLearnerIds = [learner.id, learner.learner_profile_id].filter(Boolean);
   const enrolment = await one(
-    `select e.id, e.course_id, c.name, c.title, c.objectives, c.description, c.is_coming_soon
+    `select e.id, e.course_id, c.name, c.title, c.objectives, c.description, c.is_coming_soon, c.technology
      from enrolments e
      join courses c on c.id = e.course_id
      where e.school_id = $1 and e.learner_id = any($2::uuid[]) and e.course_id = $3
@@ -625,6 +769,7 @@ async function courseForLearning(user, courseId) {
     error.statusCode = 404;
     throw error;
   }
+  const courseTechnology = enrolment.technology || null;
   const modules = await query(
     `select m.id, m.course_id, coalesce(m.name, m.title) as name, coalesce(m.objectives, m.description) as objectives, m.sort_order, m.badge_name, m.xp_points,
             coalesce(cma.available_from, m.available_from) as available_from
@@ -639,9 +784,11 @@ async function courseForLearning(user, courseId) {
             coalesce(l.learning_notes, l.description, l.content->>'notes') as content,
             l.example,
             coalesce(l.learning_notes, l.description, l.content->>'notes') as learning_notes,
+            l.lesson_objectives,
             l.practice_prompt,
             l.starter_code, l.homework_prompt, l.creativity_prompt, l.quiz, l.xp_points, l.sort_order,
-            lp.score, lp.completed_at, lp.practice_code, lp.homework_code, lp.creativity_code, lp.quiz_answers, lp.xp_points as earned_xp
+            lp.score, lp.completed_at, lp.practice_code, lp.homework_code, lp.creativity_code, lp.quiz_answers, lp.xp_points as earned_xp,
+            lp.activity_progress, lp.score_breakdown
      from lessons l
      join modules m on m.id = l.module_id
      left join lesson_progress lp on lp.lesson_id = l.id and lp.learner_id = $2
@@ -649,20 +796,49 @@ async function courseForLearning(user, courseId) {
      order by m.sort_order, l.sort_order`,
     [courseId, learner.id]
   );
+  const lessonIds = lessons.rows.map((l) => l.id);
+  let blockRows = { rows: [] };
+  if (lessonIds.length) {
+    blockRows = await query(
+      `select id, lesson_id, activity_type, sort_order, marks_weight, payload
+       from lesson_activity_blocks
+       where lesson_id = any($1::uuid[])
+       order by lesson_id, sort_order, created_at`,
+      [lessonIds]
+    );
+  }
+  const blocksByLesson = {};
+  for (const row of blockRows.rows) {
+    if (!blocksByLesson[row.lesson_id]) blocksByLesson[row.lesson_id] = [];
+    blocksByLesson[row.lesson_id].push(row);
+  }
+  const shapedLessons = lessons.rows.map((lesson) => {
+    const blocks = blocksByLesson[lesson.id] || [];
+    const player_steps = buildPlayerSteps(lesson, blocks, courseTechnology);
+    return {
+      ...lesson,
+      activity_progress: parseJsonObject(lesson.activity_progress),
+      score_breakdown: parseJsonObject(lesson.score_breakdown),
+      player_steps,
+      player_step_count: player_steps.length
+    };
+  });
   return {
     id: enrolment.course_id,
     name: enrolment.name || enrolment.title,
     objectives: enrolment.objectives || enrolment.description,
     is_coming_soon: enrolment.is_coming_soon,
+    technology: courseTechnology,
     modules: modules.rows.map((module) => ({
       ...module,
       is_locked: module.available_from ? new Date(module.available_from) > new Date() : false,
-      lessons: lessons.rows.filter((lesson) => lesson.module_id === module.id)
+      lessons: shapedLessons.filter((lesson) => lesson.module_id === module.id)
     }))
   };
 }
 
 async function saveLessonProgress(user, lessonId, payload = {}) {
+  await ensureCourseBuilderSchema({ query });
   const { learner, activeTerm } = await learnerContext(user);
   const termId = activeTerm?.id || null;
   const enrolmentLearnerIds = [learner.id, learner.learner_profile_id].filter(Boolean);
@@ -679,20 +855,67 @@ async function saveLessonProgress(user, lessonId, payload = {}) {
     error.statusCode = 404;
     throw error;
   }
-  const answers = payload.quiz_answers || {};
-  const questions = Array.isArray(lesson.quiz) ? lesson.quiz : [];
-  let score = payload.score === undefined ? null : Number(payload.score);
-  if (questions.length && payload.submit_quiz) {
-    const correct = questions.filter((question, index) => String(answers[index] || "").trim() === String(question.answer || "").trim()).length;
-    score = Math.round((correct / questions.length) * 10000) / 100;
+  const existing = await one(
+    `select practice_code, homework_code, creativity_code, quiz_answers, activity_progress, score
+     from lesson_progress where learner_id = $1 and lesson_id = $2`,
+    [learner.id, lessonId]
+  );
+  const existingQuizAnswers = parseJsonObject(existing?.quiz_answers);
+  const mergedActivity = {
+    ...parseJsonObject(existing?.activity_progress),
+    ...parseJsonObject(payload.activity_progress)
+  };
+  const practice_code =
+    mergedActivity["legacy:practice"]?.code ??
+    payload.practice_code ??
+    existing?.practice_code ??
+    "";
+  const homework_code =
+    mergedActivity["legacy:homework"]?.text ??
+    payload.homework_code ??
+    existing?.homework_code ??
+    "";
+  const creativity_code =
+    mergedActivity["legacy:creativity"]?.text ??
+    payload.creativity_code ??
+    existing?.creativity_code ??
+    "";
+  const quizFromLegacyDraft =
+    mergedActivity["legacy:quiz"]?.answers || payload.quiz_answers || existingQuizAnswers || {};
+  const answers = typeof quizFromLegacyDraft === "object" && quizFromLegacyDraft ? quizFromLegacyDraft : {};
+
+  mergedActivity["legacy:practice"] = { ...(mergedActivity["legacy:practice"] || {}), code: practice_code };
+  mergedActivity["legacy:homework"] = { ...(mergedActivity["legacy:homework"] || {}), text: homework_code };
+  mergedActivity["legacy:creativity"] = { ...(mergedActivity["legacy:creativity"] || {}), text: creativity_code };
+  mergedActivity["legacy:quiz"] = { ...(mergedActivity["legacy:quiz"] || {}), answers };
+
+  const blocks = await query(
+    `select id, activity_type, payload from lesson_activity_blocks where lesson_id = $1 order by sort_order, created_at`,
+    [lessonId]
+  );
+  const quizBlock = blocks.rows.find((b) => b.activity_type === "quiz");
+  const blockQuizQuestions = quizBlock ? parseJsonObject(quizBlock.payload).questions : null;
+
+  const legacyQuestions = Array.isArray(lesson.quiz) ? lesson.quiz : [];
+  let score = payload.score === undefined || payload.score === null ? null : Number(payload.score);
+  if (payload.submit_quiz) {
+    if (legacyQuestions.length) {
+      score = scoreQuizQuestions(legacyQuestions, answers);
+    } else if (Array.isArray(blockQuizQuestions) && blockQuizQuestions.length && quizBlock) {
+      const blockAnswers = mergedActivity[quizBlock.id]?.answers || mergedActivity[quizBlock.id]?.quiz_answers || {};
+      score = scoreQuizQuestions(blockQuizQuestions, blockAnswers);
+    }
   }
-  const completed = payload.completed || payload.submit_quiz || score !== null;
+
+  const completed = Boolean(payload.completed || payload.submit_quiz || score !== null);
+  const activityProgressJson = JSON.stringify(mergedActivity);
+
   const saved = await one(
     `insert into lesson_progress (
        learner_id, course_id, module_id, lesson_id, score, completed_at, practice_code,
-       homework_code, creativity_code, quiz_answers, xp_points, updated_at
+       homework_code, creativity_code, quiz_answers, xp_points, activity_progress, updated_at
      )
-     values ($1, $2, $3, $4, $5, case when $6 then now() else null end, $7, $8, $9, $10, $11, now())
+     values ($1, $2, $3, $4, $5, case when $6 then now() else null end, $7, $8, $9, $10::jsonb, $11, $12::jsonb, now())
      on conflict (learner_id, lesson_id) do update set
        score = coalesce(excluded.score, lesson_progress.score),
        completed_at = coalesce(excluded.completed_at, lesson_progress.completed_at),
@@ -701,23 +924,26 @@ async function saveLessonProgress(user, lessonId, payload = {}) {
        creativity_code = excluded.creativity_code,
        quiz_answers = excluded.quiz_answers,
        xp_points = greatest(lesson_progress.xp_points, excluded.xp_points),
+       activity_progress = excluded.activity_progress,
        updated_at = now()
-     returning id, score, completed_at, practice_code, homework_code, creativity_code, quiz_answers, xp_points`,
+     returning id, score, completed_at, practice_code, homework_code, creativity_code, quiz_answers, xp_points, activity_progress`,
     [
       learner.id,
       lesson.course_id,
       lesson.module_id,
       lesson.id,
       score,
-      Boolean(completed),
-      payload.practice_code || "",
-      payload.homework_code || "",
-      payload.creativity_code || "",
+      completed,
+      practice_code,
+      homework_code,
+      creativity_code,
       answers,
-      completed ? Number(lesson.xp_points || 20) : 0
+      completed ? Number(lesson.xp_points || 20) : 0,
+      activityProgressJson
     ]
   );
-  return saved;
+
+  return { ...saved, activity_progress: parseJsonObject(saved.activity_progress) };
 }
 
 module.exports = {

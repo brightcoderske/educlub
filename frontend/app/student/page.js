@@ -207,56 +207,282 @@ function LiveReportCard({ report }) {
   );
 }
 
-function WebCourseWorkspace({ course, selectedLesson, lessonDraft, setLessonDraft, onSelectLesson, onSaveLesson, onClose }) {
-  const quiz = Array.isArray(selectedLesson?.quiz) ? selectedLesson.quiz : [];
-  const practiceCode = lessonDraft.practice_code ?? selectedLesson?.practice_code ?? selectedLesson?.starter_code ?? selectedLesson?.example ?? "";
+function courseTrackLabel(technology) {
+  const map = {
+    python: "Python",
+    web: "Web (HTML/CSS/JS)",
+    android: "Android",
+    arduino: "Arduino",
+    scratch: "Scratch",
+    robotics: "Robotics",
+    computer_basics: "Computer basics",
+    other: "Mixed / other"
+  };
+  return map[String(technology || "").toLowerCase()] || "Your course";
+}
+
+function patchActivityProgress(draft, stepId, partial) {
+  return {
+    ...draft,
+    activity_progress: {
+      ...(draft.activity_progress || {}),
+      [stepId]: { ...(draft.activity_progress?.[stepId] || {}), ...partial }
+    }
+  };
+}
+
+function initialLessonDraft(lesson) {
+  if (!lesson) return {};
+  let quizAnswers = {};
+  const raw = lesson.quiz_answers;
+  if (raw && typeof raw === "object") quizAnswers = raw;
+  else if (typeof raw === "string") {
+    try {
+      quizAnswers = JSON.parse(raw);
+    } catch {
+      quizAnswers = {};
+    }
+  }
+  const ap = lesson.activity_progress;
+  return {
+    practice_code: lesson.practice_code || "",
+    homework_code: lesson.homework_code || "",
+    creativity_code: lesson.creativity_code || "",
+    quiz_answers: quizAnswers,
+    activity_progress: ap && typeof ap === "object" ? { ...ap } : {}
+  };
+}
+
+function LessonPlayerWorkspace({ course, selectedLesson, lessonDraft, setLessonDraft, onSelectLesson, onSaveLesson, onClose }) {
+  const [stepIndex, setStepIndex] = useState(0);
+  const steps = Array.isArray(selectedLesson?.player_steps) ? selectedLesson.player_steps : [];
+  const safeIndex = Math.min(Math.max(stepIndex, 0), Math.max(steps.length - 1, 0));
+  const step = steps[safeIndex];
+  const quizQuestions = step?.activity_type === "quiz" ? step.payload?.questions || [] : [];
+
+  useEffect(() => {
+    setStepIndex(0);
+  }, [selectedLesson?.id]);
+
+  const practiceCode =
+    step?.step_id === "legacy:practice"
+      ? lessonDraft.practice_code ?? selectedLesson?.practice_code ?? selectedLesson?.starter_code ?? selectedLesson?.example ?? ""
+      : lessonDraft.activity_progress?.[step?.step_id]?.code ??
+        lessonDraft.activity_progress?.[step?.step_id]?.starterCode ??
+        step?.payload?.starterCode ??
+        "";
+
+  function setPracticeCode(value) {
+    if (step?.step_id === "legacy:practice") {
+      setLessonDraft((d) => ({ ...d, practice_code: value }));
+    } else if (step?.step_id) {
+      setLessonDraft((d) => patchActivityProgress(d, step.step_id, { code: value }));
+    }
+  }
+
+  function renderStepBody() {
+    if (!step) return <EmptyState title="This lesson has no player steps yet." />;
+    const p = step.payload || {};
+    switch (step.activity_type) {
+      case "learn_content":
+        return (
+          <div className="lesson-player-learn">
+            {p.teacherNotes ? <p className="lesson-player-note"><strong>Teacher note:</strong> {p.teacherNotes}</p> : null}
+            {p.codeExample ? <pre className="lesson-player-code">{p.codeExample}</pre> : null}
+            <div className="lesson-player-rich">{String(p.richText || "").split("\n").map((line, i) => <p key={i}>{line}</p>)}</div>
+          </div>
+        );
+      case "practice": {
+        const lang = String(p.language || "html").toLowerCase();
+        const showPreview = lang === "html";
+        return (
+          <div>
+            <p>{p.instructions}</p>
+            {p.expectedHints ? <p className="lesson-player-note">{p.expectedHints}</p> : null}
+            <div className={showPreview ? "code-playground" : ""}>
+              <textarea value={practiceCode} onChange={(e) => setPracticeCode(e.target.value)} rows={showPreview ? 12 : 16} />
+              {showPreview ? <iframe title="Live preview" srcDoc={practiceCode} sandbox="allow-scripts" /> : null}
+            </div>
+          </div>
+        );
+      }
+      case "creative_corner": {
+        const creativeVal =
+          step.step_id === "legacy:creativity"
+            ? lessonDraft.creativity_code ?? selectedLesson?.creativity_code ?? ""
+            : lessonDraft.activity_progress?.[step.step_id]?.text ?? "";
+        const setCreative = (value) => {
+          if (step.step_id === "legacy:creativity") {
+            setLessonDraft((d) => ({ ...d, creativity_code: value }));
+          } else {
+            setLessonDraft((d) => patchActivityProgress(d, step.step_id, { text: value }));
+          }
+        };
+        return (
+          <div>
+            <p>{p.instructions}</p>
+            <textarea value={creativeVal} onChange={(e) => setCreative(e.target.value)} rows={10} />
+          </div>
+        );
+      }
+      case "teacher_task":
+        return (
+          <div>
+            <p>{p.instructions || p.expectedOutputDescription}</p>
+            <textarea
+              value={lessonDraft.activity_progress?.[step.step_id]?.text ?? ""}
+              onChange={(e) => setLessonDraft((d) => patchActivityProgress(d, step.step_id, { text: e.target.value }))}
+              rows={8}
+            />
+          </div>
+        );
+      case "submission": {
+        const textVal = step.source === "legacy"
+          ? lessonDraft.homework_code ?? selectedLesson?.homework_code ?? ""
+          : lessonDraft.activity_progress?.[step.step_id]?.text ?? "";
+        const setText = (value) => {
+          if (step.step_id === "legacy:homework") {
+            setLessonDraft((d) => ({ ...d, homework_code: value }));
+          } else {
+            setLessonDraft((d) => patchActivityProgress(d, step.step_id, { text: value }));
+          }
+        };
+        return (
+          <div>
+            <p>{p.instructions}</p>
+            <textarea value={textVal} onChange={(e) => setText(e.target.value)} rows={10} />
+          </div>
+        );
+      }
+      case "quiz":
+        return (
+          <div>
+            {quizQuestions.map((question, index) => {
+              const opts = question.options || [];
+              const draftAnswers =
+                step.source === "legacy"
+                  ? lessonDraft.quiz_answers || {}
+                  : lessonDraft.activity_progress?.[step.step_id]?.answers || {};
+              const setAnswer = (value) => {
+                if (step.source === "legacy") {
+                  setLessonDraft((d) => ({ ...d, quiz_answers: { ...(d.quiz_answers || {}), [index]: value } }));
+                } else {
+                  const next = { ...(lessonDraft.activity_progress?.[step.step_id]?.answers || {}), [index]: value };
+                  setLessonDraft((d) => patchActivityProgress(d, step.step_id, { answers: next }));
+                }
+              };
+              return (
+                <fieldset key={`${step.step_id}-q-${index}`} className="mini-quiz-question">
+                  <legend>
+                    {index + 1}. {question.question}
+                  </legend>
+                  {opts.map((option) => (
+                    <label key={String(option)}>
+                      <input
+                        type="radio"
+                        name={`${selectedLesson.id}-${step.step_id}-${index}`}
+                        checked={draftAnswers[index] === option}
+                        onChange={() => setAnswer(option)}
+                      />
+                      {option}
+                    </label>
+                  ))}
+                </fieldset>
+              );
+            })}
+          </div>
+        );
+      default:
+        return <p className="lesson-player-note">This activity type is not rendered yet. Your teacher can still review saved work.</p>;
+    }
+  }
+
   return (
     <div className="quiz-take-backdrop">
       <section className="course-workspace" role="dialog" aria-modal="true" aria-label={course.name}>
         <div className="quiz-take-header">
-          <div><p className="eyebrow">Web Development</p><h2>{course.name}</h2><p>{course.objectives}</p></div>
-          <button type="button" className="student-secondary" onClick={onClose}>Close</button>
+          <div>
+            <p className="eyebrow">{courseTrackLabel(course.technology)}</p>
+            <h2>{course.name}</h2>
+            <p>{course.objectives}</p>
+          </div>
+          <button type="button" className="student-secondary" onClick={onClose}>
+            Close
+          </button>
         </div>
         <div className="course-workspace-grid">
           <aside className="module-list">
             {course.modules.map((module) => (
               <section key={module.id}>
-                <h3>{module.sort_order}. {module.name}</h3>
+                <h3>
+                  {module.sort_order}. {module.name}
+                </h3>
                 <p>{module.is_locked ? "Locked until your teacher opens it." : module.badge_name}</p>
                 {module.lessons.map((lesson) => (
-                  <button key={lesson.id} type="button" disabled={module.is_locked} className={selectedLesson?.id === lesson.id ? "active" : ""} onClick={() => onSelectLesson(lesson)}>{lesson.name}</button>
+                  <button
+                    key={lesson.id}
+                    type="button"
+                    disabled={module.is_locked}
+                    className={selectedLesson?.id === lesson.id ? "active" : ""}
+                    onClick={() => onSelectLesson(lesson)}
+                  >
+                    {lesson.name}
+                  </button>
                 ))}
               </section>
             ))}
           </aside>
           {selectedLesson ? (
-            <div className="lesson-sections">
-              <section><h3>Learn</h3><p>{selectedLesson.learning_notes || selectedLesson.content}</p></section>
-              <section>
-                <h3>Practice</h3><p>{selectedLesson.practice_prompt}</p>
-                <div className="code-playground">
-                  <textarea value={practiceCode} onChange={(e) => setLessonDraft((draft) => ({ ...draft, practice_code: e.target.value }))} />
-                  <iframe title="Live preview" srcDoc={practiceCode} sandbox="allow-scripts" />
+            <div className="lesson-player">
+              <header className="lesson-player-header">
+                <div>
+                  <p className="eyebrow">
+                    {steps.length ? `Step ${safeIndex + 1} of ${steps.length}` : "No activities yet"}
+                  </p>
+                  <h3>{selectedLesson.name}</h3>
+                  {selectedLesson.lesson_objectives ? <p>{selectedLesson.lesson_objectives}</p> : null}
                 </div>
-              </section>
-              <section><h3>Home Task</h3><p>{selectedLesson.homework_prompt}</p><textarea value={lessonDraft.homework_code ?? selectedLesson.homework_code ?? ""} onChange={(e) => setLessonDraft((draft) => ({ ...draft, homework_code: e.target.value }))} /></section>
-              <section><h3>Creativity Base</h3><p>{selectedLesson.creativity_prompt}</p><textarea value={lessonDraft.creativity_code ?? selectedLesson.creativity_code ?? ""} onChange={(e) => setLessonDraft((draft) => ({ ...draft, creativity_code: e.target.value }))} /></section>
-              <section>
-                <h3>Quiz</h3>
-                {quiz.map((question, index) => (
-                  <fieldset key={`${question.question}-${index}`} className="mini-quiz-question">
-                    <legend>{index + 1}. {question.question}</legend>
-                    {(question.options || []).map((option) => <label key={option}><input type="radio" name={`lesson-${selectedLesson.id}-${index}`} checked={(lessonDraft.quiz_answers || {})[index] === option} onChange={() => setLessonDraft((draft) => ({ ...draft, quiz_answers: { ...(draft.quiz_answers || {}), [index]: option } }))} />{option}</label>)}
-                  </fieldset>
+                <div className="lesson-player-score">
+                  {selectedLesson.score != null ? <strong>{Number(selectedLesson.score).toFixed(1)}%</strong> : <span>Not graded yet</span>}
+                </div>
+              </header>
+              <div className="lesson-player-progress">
+                {steps.map((s, i) => (
+                  <button
+                    key={s.step_id}
+                    type="button"
+                    className={`lesson-player-dot ${i === safeIndex ? "active" : ""} ${i < safeIndex ? "done" : ""}`}
+                    onClick={() => setStepIndex(i)}
+                    title={s.title}
+                  >
+                    {i + 1}
+                  </button>
                 ))}
-              </section>
-              <div className="lesson-action-row">
-                <button type="button" onClick={() => onSaveLesson(false)}>Autosave now</button>
-                <button type="button" onClick={() => onSaveLesson(true)}>Submit lesson quiz</button>
-                {selectedLesson.score !== null && selectedLesson.score !== undefined ? <strong>{Number(selectedLesson.score).toFixed(1)}%</strong> : null}
+              </div>
+              {step ? (
+                <section className="lesson-player-step">
+                  <h4>{step.title}</h4>
+                  {renderStepBody()}
+                </section>
+              ) : null}
+              <div className="lesson-action-row lesson-player-nav">
+                <button type="button" className="student-secondary" disabled={safeIndex <= 0} onClick={() => setStepIndex((i) => Math.max(0, i - 1))}>
+                  Previous step
+                </button>
+                <button type="button" className="student-secondary" disabled={safeIndex >= steps.length - 1} onClick={() => setStepIndex((i) => Math.min(steps.length - 1, i + 1))}>
+                  Next step
+                </button>
+                <button type="button" onClick={() => onSaveLesson(false)}>
+                  Save progress
+                </button>
+                <button type="button" onClick={() => onSaveLesson(true)}>
+                  Submit quiz
+                </button>
               </div>
             </div>
-          ) : <EmptyState title="Choose an open lesson to begin." />}
+          ) : (
+            <EmptyState title="Choose an open lesson to begin." />
+          )}
         </div>
       </section>
     </div>
@@ -391,7 +617,7 @@ export default function StudentPage() {
       setActiveCourse(detail);
       const firstLesson = detail.modules.find((module) => !module.is_locked)?.lessons?.[0] || null;
       setSelectedLesson(firstLesson);
-      setLessonDraft({});
+      setLessonDraft(initialLessonDraft(firstLesson));
     } catch (err) {
       setError(err.message);
     }
@@ -399,7 +625,7 @@ export default function StudentPage() {
 
   function selectLesson(lesson) {
     setSelectedLesson(lesson);
-    setLessonDraft({});
+    setLessonDraft(initialLessonDraft(lesson));
   }
 
   async function saveLesson(submitQuiz = false) {
@@ -415,7 +641,8 @@ export default function StudentPage() {
       practice_code: saved.practice_code,
       homework_code: saved.homework_code,
       creativity_code: saved.creativity_code,
-      quiz_answers: saved.quiz_answers || {}
+      quiz_answers: typeof saved.quiz_answers === "object" && saved.quiz_answers ? saved.quiz_answers : {},
+      activity_progress: saved.activity_progress && typeof saved.activity_progress === "object" ? saved.activity_progress : {}
     });
     await loadDashboard();
   }
@@ -770,7 +997,7 @@ export default function StudentPage() {
         </div>
       ) : null}
       {activeCourse ? (
-        <WebCourseWorkspace
+        <LessonPlayerWorkspace
           course={activeCourse}
           selectedLesson={selectedLesson}
           lessonDraft={lessonDraft}
