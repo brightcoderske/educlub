@@ -22,6 +22,7 @@ router.patch("/learners/:id/status", controller.setLearnerActive);
 router.post("/learners/:id/promotions", controller.promoteLearner);
 router.get("/courses", controller.availableCourses);
 router.post("/course-allocations", controller.bulkAllocateCourse);
+router.delete("/course-allocations/:courseId", controller.deallocateCourse);
 router.get("/submissions", controller.listSubmissions);
 router.patch("/submissions/:id/review", controller.reviewSubmission);
 router.get("/typing-results", controller.typingResults);

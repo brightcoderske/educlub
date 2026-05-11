@@ -62,21 +62,6 @@ async function ensureCourseColumns(db) {
 async function ensureTypingColumns(db) {
   await db.query("alter table typing_tests add column if not exists max_attempts integer not null default 3");
   await db.query("alter table typing_attempts add column if not exists raw_answer text not null default ''");
-  await db.query("alter table typing_attempts drop constraint if exists typing_attempts_learner_id_fkey");
-  await db.query(`
-    do $$
-    begin
-      if not exists (
-        select 1 from pg_constraint
-        where conname = 'typing_attempts_learner_id_fkey'
-          and conrelid = 'typing_attempts'::regclass
-      ) then
-        alter table typing_attempts
-          add constraint typing_attempts_learner_id_fkey
-          foreign key (learner_id) references users(id) on delete cascade not valid;
-      end if;
-    end $$;
-  `);
 }
 
 module.exports = { ensureCourseColumns, ensureTypingColumns };

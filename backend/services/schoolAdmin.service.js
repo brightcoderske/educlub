@@ -22,6 +22,21 @@ function scopedSchoolId(user) {
   return user.school_id;
 }
 
+async function enrolmentLearnerReferenceTable(client) {
+  const result = await client.query(`
+    select referenced.relname as referenced_table
+    from pg_constraint constraint_info
+    join pg_class source on source.oid = constraint_info.conrelid
+    join pg_class referenced on referenced.oid = constraint_info.confrelid
+    join pg_attribute source_column on source_column.attrelid = source.oid and source_column.attnum = any(constraint_info.conkey)
+    where source.relname = 'enrolments'
+      and source_column.attname = 'learner_id'
+      and constraint_info.contype = 'f'
+    limit 1
+  `);
+  return result.rows[0]?.referenced_table || "users";
+}
+
 function like(value) {
   return `%${value}%`;
 }
@@ -162,7 +177,7 @@ async function enrolmentByCourse(user, params = {}) {
     `select c.id, coalesce(c.name, c.title) as name, count(e.id)::int as enrolment_count
      from courses c
      join enrolments e on e.course_id = c.id
-     where e.school_id = $1 and ($2::uuid is null or e.term_id = $2)
+     where e.school_id = $1 and e.status = 'active' and ($2::uuid is null or e.term_id = $2)
      group by c.id, coalesce(c.name, c.title)
      order by coalesce(c.name, c.title)`,
     [schoolId, termId]
@@ -1210,7 +1225,7 @@ async function learnerDetail(user, learnerId, params = {}) {
     "select id from learner_profiles where user_id = $1 and school_id = $2",
     [learnerId, schoolId]
   );
-  const profileId = learnerProfile?.id || null;
+  const enrolmentLearnerIds = [learnerId, learnerProfile?.id].filter(Boolean);
   const termId = term?.id || null;
 
   const [enrolments, submissions, reports, typing, quizzes, progress, quizTrend] = await Promise.all([
@@ -1220,9 +1235,9 @@ async function learnerDetail(user, learnerId, params = {}) {
        join courses c on c.id = e.course_id
        join terms t on t.id = e.term_id
        join academic_years ay on ay.id = t.academic_year_id
-       where e.school_id = $1 and e.learner_id = $2 and ($3::uuid is null or e.term_id = $3)
+       where e.school_id = $1 and e.learner_id = any($2::uuid[]) and ($3::uuid is null or e.term_id = $3)
        order by ay.year desc, t.starts_on desc`,
-      [schoolId, profileId, termId]
+      [schoolId, enrolmentLearnerIds, termId]
     ),
     query(
       `select id, file_url, status, feedback, reviewed_at, created_at
@@ -1357,6 +1372,7 @@ async function bulkAllocateCourse(user, payload) {
   }
 
   return transaction(async (client) => {
+    const enrolmentLearnerTable = await enrolmentLearnerReferenceTable(client);
     const inserted = [];
     for (const learnerId of payload.learner_ids) {
       const learnerCheck = await client.query(
@@ -1373,12 +1389,13 @@ async function bulkAllocateCourse(user, payload) {
         const profile = await upsertLearnerProfile(client, schoolId, learner);
         profileId = profile.id;
       }
+      const enrolmentLearnerId = enrolmentLearnerTable === "learner_profiles" ? profileId : learner.id;
       const result = await client.query(
         `insert into enrolments (learner_id, school_id, course_id, term_id, status)
          values ($1, $2, $3, $4, 'active')
-         on conflict (term_id, learner_id, course_id) do update set status = 'active', updated_at = now()
+         on conflict (term_id, learner_id, course_id) do update set status = 'active'
          returning id, learner_id, course_id, term_id, status`,
-        [profileId, schoolId, payload.course_id, termId]
+        [enrolmentLearnerId, schoolId, payload.course_id, termId]
       );
       inserted.push(result.rows[0]);
     }
@@ -1404,6 +1421,39 @@ async function bulkAllocateCourse(user, payload) {
       metadata: { learners: inserted.length }
     });
     return { allocated: inserted, count: inserted.length };
+  });
+}
+
+async function deallocateCourse(user, courseId, payload = {}) {
+  const schoolId = scopedSchoolId(user);
+  const term = payload.term_id ? { id: payload.term_id } : await activeTerm(user);
+  const termId = term?.id || null;
+
+  if (!termId) {
+    const error = new Error("An active term is required before deallocating a course");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  return transaction(async (client) => {
+    const result = await client.query(
+      `update enrolments
+       set status = 'inactive'
+       where school_id = $1 and course_id = $2 and term_id = $3 and status = 'active'
+       returning id, learner_id, course_id, term_id, status`,
+      [schoolId, courseId, termId]
+    );
+    await recordAudit({
+      client,
+      actor: user,
+      action: "course.deallocate",
+      targetType: "course",
+      targetId: courseId,
+      schoolId,
+      termId,
+      metadata: { learners: result.rows.length }
+    });
+    return { deallocated: result.rows, count: result.rows.length };
   });
 }
 
@@ -1449,5 +1499,6 @@ module.exports = {
   addStream,
   deleteStream,
   availableCourses,
-  bulkAllocateCourse
+  bulkAllocateCourse,
+  deallocateCourse
 };

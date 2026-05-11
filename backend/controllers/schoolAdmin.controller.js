@@ -206,6 +206,7 @@ const addStream = wrap(async (req, res) => res.status(201).json(await service.ad
 const deleteStream = wrap(async (req, res) => res.json(await service.deleteStream(req.user, req.params.id)));
 const availableCourses = wrap(async (req, res) => res.json(await service.availableCourses(req.user)));
 const bulkAllocateCourse = wrap(async (req, res) => res.json(await service.bulkAllocateCourse(req.user, req.body)));
+const deallocateCourse = wrap(async (req, res) => res.json(await service.deallocateCourse(req.user, req.params.courseId, req.body)));
 
 module.exports = {
   profile,
@@ -247,5 +248,6 @@ module.exports = {
   addStream,
   deleteStream,
   availableCourses,
-  bulkAllocateCourse
+  bulkAllocateCourse,
+  deallocateCourse
 };

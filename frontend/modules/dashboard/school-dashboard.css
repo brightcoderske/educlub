@@ -552,11 +552,21 @@
   gap: 10px;
 }
 
+.module-availability-grid .helper-text {
+  grid-column: 1 / -1;
+}
+
 .helper-text {
   margin: 0;
   color: #5c6d80;
   font-size: 0.88rem;
   line-height: 1.5;
+}
+
+.success-alert {
+  background: #eefaf3;
+  border-color: #bfe8d1;
+  color: #17633e;
 }
 
 @media (max-width: 1060px) {

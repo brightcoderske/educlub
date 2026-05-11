@@ -91,7 +91,7 @@ async function learnerContext(user) {
 async function dashboard(user, params = {}) {
   const { learner, activeTerm } = await learnerContext(user);
   const termId = params.term_id || activeTerm?.id || null;
-  const profileId = learner.learner_profile_id || null;
+  const enrolmentLearnerIds = [learner.id, learner.learner_profile_id].filter(Boolean);
 
   const [courses, progress, typing, quizzes, reports, leaderboards, submissions, assignedQuizzes, assignedTypingTests, quizTrend, typingTrend, quizLeaders, typingLeaders] = await Promise.all([
     query(
@@ -102,9 +102,9 @@ async function dashboard(user, params = {}) {
        join courses c on c.id = e.course_id
        join terms t on t.id = e.term_id
        join academic_years ay on ay.id = t.academic_year_id
-       where e.school_id = $1 and e.learner_id = $2 and ($3::uuid is null or e.term_id = $3)
+       where e.school_id = $1 and e.learner_id = any($2::uuid[]) and ($3::uuid is null or e.term_id = $3)
        order by coalesce(c.name, c.title)`,
-      [learner.school_id, profileId, termId]
+      [learner.school_id, enrolmentLearnerIds, termId]
     ),
     query(
       `select coalesce(c.name, c.title) as course_name, c.id as course_id,
@@ -611,13 +611,14 @@ async function submitTypingAttempt(user, testId, payload = {}) {
 async function courseForLearning(user, courseId) {
   const { learner, activeTerm } = await learnerContext(user);
   const termId = activeTerm?.id || null;
+  const enrolmentLearnerIds = [learner.id, learner.learner_profile_id].filter(Boolean);
   const enrolment = await one(
     `select e.id, e.course_id, c.name, c.title, c.objectives, c.description, c.is_coming_soon
      from enrolments e
      join courses c on c.id = e.course_id
-     where e.school_id = $1 and e.learner_id = $2 and e.course_id = $3
+     where e.school_id = $1 and e.learner_id = any($2::uuid[]) and e.course_id = $3
        and ($4::uuid is null or e.term_id = $4) and e.status = 'active'`,
-    [learner.school_id, learner.learner_profile_id, courseId, termId]
+    [learner.school_id, enrolmentLearnerIds, courseId, termId]
   );
   if (!enrolment) {
     const error = new Error("Course is not allocated to you for this term");
@@ -664,13 +665,14 @@ async function courseForLearning(user, courseId) {
 async function saveLessonProgress(user, lessonId, payload = {}) {
   const { learner, activeTerm } = await learnerContext(user);
   const termId = activeTerm?.id || null;
+  const enrolmentLearnerIds = [learner.id, learner.learner_profile_id].filter(Boolean);
   const lesson = await one(
     `select l.id, l.module_id, l.quiz, l.xp_points, m.course_id
      from lessons l
      join modules m on m.id = l.module_id
-     join enrolments e on e.course_id = m.course_id and e.school_id = $2 and e.learner_id = $3
+     join enrolments e on e.course_id = m.course_id and e.school_id = $2 and e.learner_id = any($3::uuid[])
      where l.id = $1 and ($4::uuid is null or e.term_id = $4) and e.status = 'active'`,
-    [lessonId, learner.school_id, learner.learner_profile_id, termId]
+    [lessonId, learner.school_id, enrolmentLearnerIds, termId]
   );
   if (!lesson) {
     const error = new Error("Lesson is not available to you");
