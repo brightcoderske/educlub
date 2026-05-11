@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef } from "react";
+import { useRef, useState } from "react";
 
 const sampleData = {
   school: { name: "ST. MARY'S ACADEMY", logo_url: "" },
@@ -106,7 +106,11 @@ function LineChart({ data, valueKey, label, yLabel, note }) {
 
   return (
     <div style={{ marginTop: "8px" }}>
-      <svg viewBox={`0 0 ${width} ${height}`} style={{ width: "100%", height: "auto", maxHeight: "180px" }}>
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        viewBox={`0 0 ${width} ${height}`}
+        style={{ width: "100%", height: "auto", maxHeight: "180px" }}
+      >
         {/* Y axis line */}
         <line x1={padding.left} y1={padding.top} x2={padding.left} y2={height - padding.bottom} stroke="#ccc" strokeWidth="1" />
         {/* X axis line */}
@@ -134,79 +138,9 @@ function LineChart({ data, valueKey, label, yLabel, note }) {
 
 export default function ReportCard({ data = sampleData, onClose }) {
   const cardRef = useRef(null);
+  const [imgLoadError, setImgLoadError] = useState(false);
 
-  const handlePrint = () => {
-    const printWindow = window.open("", "_blank");
-    if (!printWindow) return;
-    const content = cardRef.current?.innerHTML || "";
-    printWindow.document.write(`
-      <html>
-        <head>
-          <title>Report Card - ${data.learner.full_name}</title>
-          <style>
-            @page { size: A4; margin: 15mm; }
-            body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; padding: 0; background: #fff; color: #1a1a2e; }
-            .report-card { max-width: 210mm; margin: 0 auto; padding: 20px; }
-            .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
-            .header-left { display: flex; align-items: center; gap: 12px; }
-            .school-logo { width: 60px; height: 60px; object-fit: contain; border-radius: 8px; border: 1px solid #d0d8e8; }
-            .header-center { text-align: center; flex: 1; }
-            .header-center h1 { font-size: 22px; font-weight: 800; color: #003b8f; margin: 0; text-transform: uppercase; letter-spacing: 1px; }
-            .header-center .club { font-size: 13px; color: #003b8f; font-weight: 600; margin: 2px 0; }
-            .header-center .term { font-size: 12px; color: #555; margin: 0; }
-            .header-right { text-align: right; }
-            .header-right .educlub-logo { font-size: 18px; font-weight: 800; color: #003b8f; }
-            .header-right .tagline { font-size: 10px; color: #888; }
-            .divider { border: none; border-top: 2px dashed #003b8f; margin: 12px 0; }
-            .student-card { border: 1px solid #d0d8e8; border-radius: 12px; padding: 16px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: flex-start; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
-            .student-details { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 20px; flex: 1; }
-            .student-details .label { font-size: 11px; color: #888; font-weight: 500; }
-            .student-details .value { font-size: 13px; color: #1a1a2e; font-weight: 600; }
-            .student-avatar { text-align: center; min-width: 100px; }
-            .student-avatar .avatar-circle { width: 60px; height: 60px; border-radius: 50%; background: #003b8f; color: #fff; display: flex; align-items: center; justify-content: center; font-size: 24px; font-weight: 700; margin: 0 auto 8px; }
-            .student-avatar .name { font-size: 14px; font-weight: 700; color: #003b8f; text-transform: uppercase; }
-            .student-avatar .class { font-size: 11px; color: #666; }
-            .charts-row { display: flex; gap: 16px; margin-bottom: 16px; }
-            .chart-card { flex: 1; border: 1px solid #d0d8e8; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
-            .chart-header { background: linear-gradient(135deg, #002b72, #003b8f); color: #fff; padding: 10px 14px; display: flex; align-items: center; gap: 8px; }
-            .chart-header .icon { font-size: 18px; }
-            .chart-header .title { font-size: 13px; font-weight: 700; }
-            .chart-header .subtitle { font-size: 10px; opacity: 0.8; }
-            .chart-body { padding: 10px; }
-            .course-card { border: 1px solid #d0d8e8; border-radius: 12px; overflow: hidden; margin-bottom: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
-            .course-header { background: linear-gradient(135deg, #002b72, #003b8f); color: #fff; padding: 10px 14px; display: flex; align-items: center; gap: 8px; }
-            .course-header .title { font-size: 13px; font-weight: 700; }
-            .course-header .course-name { color: #f5a400; font-weight: 800; }
-            .course-table { width: 100%; border-collapse: collapse; }
-            .course-table th { background: #eef4ff; font-size: 11px; font-weight: 600; color: #003b8f; padding: 8px 10px; text-align: left; border-bottom: 1px solid #d0d8e8; }
-            .course-table td { font-size: 12px; padding: 8px 10px; border-bottom: 1px solid #eef4ff; }
-            .feedback-box { background: #eef4ff; border-radius: 12px; padding: 14px; margin-bottom: 12px; }
-            .feedback-box .feedback-title { font-size: 13px; font-weight: 700; color: #003b8f; margin-bottom: 6px; display: flex; align-items: center; gap: 6px; }
-            .feedback-box p { font-size: 12px; color: #333; line-height: 1.5; margin: 0; }
-            .footer { text-align: center; font-size: 10px; color: #888; font-style: italic; margin-top: 12px; }
-            .badge { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
-            .badge-green { background: #07883f; color: #fff; }
-            .badge-blue { background: #1d5fc4; color: #fff; }
-            .badge-orange { background: #f4a000; color: #fff; }
-            .overall-badge { display: inline-block; padding: 4px 14px; border-radius: 20px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
-            .overall-green { background: #07883f; color: #fff; }
-            .overall-blue { background: #1d5fc4; color: #fff; }
-            .overall-orange { background: #f4a000; color: #fff; }
-            @media print {
-              .no-print { display: none !important; }
-              body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-            }
-          </style>
-        </head>
-        <body>
-          <div class="report-card">${content}</div>
-          <script>window.print();</script>
-        </body>
-      </html>
-    `);
-    printWindow.document.close();
-  };
-
+  // Keep a helper to decide badge colours (still needed for inline styles)
   const overallClass = {
     "Exceeds Expectation": "overall-green",
     "Meets Expectation": "overall-blue",
@@ -221,11 +155,8 @@ export default function ReportCard({ data = sampleData, onClose }) {
   return (
     <div className="quiz-take-backdrop" style={{ zIndex: 1000 }}>
       <div style={{ maxWidth: "210mm", margin: "20px auto", background: "#fff", borderRadius: "16px", boxShadow: "0 8px 32px rgba(0,0,0,0.15)", padding: "24px", position: "relative" }}>
-        {/* Print/Close buttons */}
-        <div className="no-print" style={{ position: "absolute", top: "12px", right: "12px", display: "flex", gap: "8px" }}>
-          <button type="button" onClick={handlePrint} style={{ padding: "8px 16px", background: "#003b8f", color: "#fff", border: "none", borderRadius: "8px", cursor: "pointer", fontWeight: 600, fontSize: "13px" }}>
-            🖨️ Print / PDF
-          </button>
+        {/* Single close button – print/export moved to reports page */}
+        <div style={{ position: "absolute", top: "12px", right: "12px", display: "flex", gap: "8px" }}>
           {onClose && (
             <button type="button" onClick={onClose} style={{ padding: "8px 16px", background: "#e5e7eb", color: "#333", border: "none", borderRadius: "8px", cursor: "pointer", fontWeight: 600, fontSize: "13px" }}>
               ✕ Close
@@ -237,8 +168,14 @@ export default function ReportCard({ data = sampleData, onClose }) {
           {/* HEADER */}
           <div className="header" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "16px" }}>
             <div className="header-left" style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-              {data.school.logo_url ? (
-                <img src={data.school.logo_url} alt="School logo" className="school-logo" style={{ width: "60px", height: "60px", objectFit: "contain", borderRadius: "8px", border: "1px solid #d0d8e8" }} />
+              {data.school.logo_url && !imgLoadError ? (
+                <img
+                  src={data.school.logo_url}
+                  alt="School logo"
+                  className="school-logo"
+                  style={{ width: "60px", height: "60px", objectFit: "contain", borderRadius: "8px", border: "1px solid #d0d8e8" }}
+                  onError={() => setImgLoadError(true)}
+                />
               ) : (
                 <div style={{ width: "60px", height: "60px", borderRadius: "8px", background: "#eef4ff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "24px", color: "#003b8f", fontWeight: 700 }}>🏫</div>
               )}
