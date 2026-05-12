@@ -3,6 +3,7 @@ const controller = require("../controllers/systemAdmin.controller");
 const courseBuilder = require("../controllers/courseBuilder.controller");
 const { authenticate } = require("../middleware/auth.middleware");
 const { requireRoles } = require("../middleware/role.middleware");
+const { memoryUpload } = require("../middleware/upload.middleware");
 
 const router = express.Router();
 router.use(authenticate, requireRoles("system_admin"));
@@ -14,6 +15,7 @@ router.get("/meta/activity-types", courseBuilder.activityTypes);
 
 router.get("/:id/builder", courseBuilder.getBlueprint);
 router.patch("/:id/builder", courseBuilder.patchCourse);
+router.post("/:id/import-jsx", memoryUpload.single("file"), courseBuilder.importFromJSX);
 
 router.post("/:courseId/modules", courseBuilder.createModule);
 router.patch("/:courseId/modules/reorder", courseBuilder.reorderModules);

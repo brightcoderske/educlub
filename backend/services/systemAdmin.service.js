@@ -238,9 +238,23 @@ async function uploadSchoolLogo(id, file, user) {
 
   const uploadDir = path.resolve(__dirname, "..", "uploads", "school-logos");
   fs.mkdirSync(uploadDir, { recursive: true });
+  
+  // Delete old logo if exists
+  const currentSchool = await one("select logo_url from schools where id = $1", [id]);
+  if (currentSchool?.logo_url) {
+    const oldLogoPath = path.join(__dirname, "..", "uploads", currentSchool.logo_url.replace("/uploads/", ""));
+    try {
+      if (fs.existsSync(oldLogoPath)) {
+        fs.unlinkSync(oldLogoPath);
+      }
+    } catch (err) {
+      // Ignore deletion errors
+    }
+  }
+  
   const filename = `${id}-${Date.now()}${extension}`;
   fs.writeFileSync(path.join(uploadDir, filename), file.buffer);
-  const logoUrl = `/uploads/school-logos/${filename}`;
+  const logoUrl = `/uploads/school-logos/${filename}?v=${Date.now()}`;
 
   const school = await one(
     `update schools set logo_url = $2, updated_at = now()

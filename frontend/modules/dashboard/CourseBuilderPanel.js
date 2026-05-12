@@ -69,6 +69,7 @@ export default function CourseBuilderPanel({ courses, onPublished }) {
   const [meta, setMeta] = useState({});
   const [expanded, setExpanded] = useState(() => new Set());
   const [activityTypes, setActivityTypes] = useState([]);
+  const [jsxFile, setJsxFile] = useState(null);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -261,6 +262,24 @@ export default function CourseBuilderPanel({ courses, onPublished }) {
     await loadBlueprint(courseId);
   }
 
+  async function handleJSXUpload(e) {
+    e.preventDefault();
+    if (!jsxFile || !courseId) return;
+    setLoading(true);
+    setError("");
+    try {
+      const formData = new FormData();
+      formData.append("file", jsxFile);
+      await api.upload(`/courses/${courseId}/import-jsx`, formData);
+      await loadBlueprint(courseId);
+      setJsxFile(null);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   const modules = blueprint?.modules || [];
 
   return (
@@ -345,9 +364,22 @@ export default function CourseBuilderPanel({ courses, onPublished }) {
           <section className="panel compact-panel">
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
               <h3 style={{ margin: 0 }}>Modules → Lessons → Activities</h3>
-              <button type="button" className="secondary-button" style={{ display: "inline-flex", alignItems: "center", gap: 6 }} onClick={addModule}>
-                <Plus size={16} /> Add module
-              </button>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <form onSubmit={handleJSXUpload} style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <input
+                    type="file"
+                    accept=".jsx,.js,.txt"
+                    onChange={(e) => setJsxFile(e.target.files[0])}
+                    style={{ fontSize: 12 }}
+                  />
+                  <button type="submit" className="secondary-button" disabled={!jsxFile || !courseId}>
+                    Import JSX
+                  </button>
+                </form>
+                <button type="button" className="secondary-button" style={{ display: "inline-flex", alignItems: "center", gap: 6 }} onClick={addModule}>
+                  <Plus size={16} /> Add module
+                </button>
+              </div>
             </div>
             <p className="eyebrow" style={{ marginTop: 6 }}>
               Drag modules, lessons, and activity blocks to reorder. Each lesson&apos;s activity marks should total 100 when you are ready to go live.

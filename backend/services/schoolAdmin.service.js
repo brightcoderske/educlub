@@ -1019,22 +1019,61 @@ async function quizPerformance(user, params = {}) {
 async function leaderboards(user, params = {}) {
   const schoolId = scopedSchoolId(user);
   const { limit, offset } = pagination(params);
-  const termId = params.term_id || null;
+  let termId = params.term_id || null;
+  const leaderboardType = params.type || null;
+  const includeAll = params.include_all === "true";
+  const weekStart = params.week_start || null;
+  const weekEnd = params.week_end || null;
+
+  // Handle empty string or "undefined" string
+  if (!termId || termId === "undefined" || termId === "") {
+    termId = null;
+  }
+
+  if (!leaderboardType) {
+    // Return summary of all leaderboard types
+    const typing = await getTypingLeaderboard(schoolId, termId, limit, offset, includeAll, weekStart, weekEnd);
+    const quiz = await getQuizLeaderboard(schoolId, termId, limit, offset, includeAll, weekStart, weekEnd);
+    const course = await getCourseLeaderboard(schoolId, termId, limit, offset, includeAll, weekStart, weekEnd);
+
+    return {
+      typing: typing.rows,
+      quiz: quiz.rows,
+      course: course.rows,
+      counts: {
+        typing: typing.count,
+        quiz: quiz.count,
+        course: course.count
+      }
+    };
+  }
+
+  if (leaderboardType === "typing") {
+    return getTypingLeaderboard(schoolId, termId, limit, offset, includeAll, weekStart, weekEnd);
+  }
+  if (leaderboardType === "quiz") {
+    return getQuizLeaderboard(schoolId, termId, limit, offset, includeAll, weekStart, weekEnd);
+  }
+  if (leaderboardType === "course") {
+    return getCourseLeaderboard(schoolId, termId, limit, offset, includeAll, weekStart, weekEnd);
+  }
+
+  throw new Error("Invalid leaderboard type");
+}
+
+async function getTypingLeaderboard(schoolId, termId, limit, offset, includeAll, weekStart, weekEnd) {
+  const query = includeAll ? getTypingLeaderboardWithAll : getTypingLeaderboardTop;
+  return query(schoolId, termId, limit, offset, weekStart, weekEnd);
+}
+
+async function getTypingLeaderboardTop(schoolId, termId, limit, offset, weekStart, weekEnd) {
+  const dateFilter = weekStart && weekEnd ? `and ts.created_at::date >= $3 and ts.created_at::date <= $4` : "";
+  const countFilter = weekStart && weekEnd ? `and created_at::date >= $3 and created_at::date <= $4` : "";
+  const params = weekStart && weekEnd ? [schoolId, termId, weekStart, weekEnd, limit, offset] : [schoolId, termId, limit, offset];
+  const countParams = weekStart && weekEnd ? [schoolId, termId, weekStart, weekEnd] : [schoolId, termId];
+
   return list(
-    `with quiz_scores as (
-       select qa.learner_id, qa.school_id, qa.term_id, max(qa.score)::numeric as score, max(qa.created_at) as created_at
-       from quiz_attempts qa
-       where qa.school_id = $1 and ($2::uuid is null or qa.term_id = $2)
-       group by qa.learner_id, qa.school_id, qa.term_id
-     ),
-     quiz_ranked as (
-       select concat('quiz-', qs.term_id, '-', qs.learner_id) as id, qs.learner_id, qs.school_id, qs.term_id,
-              'quiz'::text as leaderboard_type, qs.score,
-              dense_rank() over (partition by qs.school_id, qs.term_id order by qs.score desc, qs.created_at asc)::int as rank,
-              qs.created_at
-       from quiz_scores qs
-     ),
-     typing_ranked as (
+    `with typing_ranked as (
        select concat('typing-', ts.term_id, '-', ts.learner_id) as id, ts.learner_id, ts.school_id, ts.term_id,
               'typing'::text as leaderboard_type, ts.score,
               dense_rank() over (partition by ts.school_id, ts.term_id order by ts.score desc, ts.accuracy desc, ts.created_at asc)::int as rank,
@@ -1047,42 +1086,214 @@ async function leaderboards(user, params = {}) {
            union all
            select learner_id, school_id, term_id, wpm, accuracy, created_at from typing_attempts
          ) typing_source
-         where school_id = $1 and ($2::uuid is null or term_id = $2)
+         where school_id = $1 and ($2::uuid is null or term_id = $2) ${dateFilter}
          order by learner_id, school_id, term_id, wpm desc, accuracy desc, created_at asc
        ) ts
-     ),
-     stored_ranked as (
-       select le.id::text, le.learner_id, le.school_id, le.term_id, le.leaderboard_type, le.score, le.rank, le.created_at
-       from leaderboard_entries le
-       where le.school_id = $1 and ($2::uuid is null or le.term_id = $2) and le.leaderboard_type not in ('quiz', 'typing')
-     ),
-     combined as (
-       select * from stored_ranked
-       union all select * from quiz_ranked
-       union all select * from typing_ranked
      )
      select c.id, c.learner_id, c.term_id, c.leaderboard_type, c.score, c.rank, c.created_at,
             coalesce(u.full_name, u.name) as learner_name, u.grade, u.stream
-     from combined c
+     from typing_ranked c
      join users u on u.id = c.learner_id
-     order by c.leaderboard_type, c.rank asc, coalesce(u.full_name, u.name)
-     limit $3 offset $4`,
-    [schoolId, termId, limit, offset],
-    `select (
-       (select count(*) from leaderboard_entries where school_id = $1 and ($2::uuid is null or term_id = $2) and leaderboard_type not in ('quiz', 'typing')) +
-       (select count(*) from (select learner_id, term_id from quiz_attempts where school_id = $1 and ($2::uuid is null or term_id = $2) group by learner_id, term_id) q) +
-       (select count(*) from (
-         select learner_id, term_id
-         from (
-           select learner_id, school_id, term_id from typing_results
-           union all
-           select learner_id, school_id, term_id from typing_attempts
-         ) typing_source
-         where school_id = $1 and ($2::uuid is null or term_id = $2)
-         group by learner_id, term_id
-       ) t)
-     ) as count`,
-    [schoolId, termId]
+     order by c.score desc, c.rank asc
+     limit $${params.length - 1} offset $${params.length}`,
+    params,
+    `select count(*) from (
+       select learner_id, term_id
+       from (
+         select learner_id, school_id, term_id, created_at from typing_results
+         union all
+         select learner_id, school_id, term_id, created_at from typing_attempts
+       ) typing_source
+       where school_id = $1 and ($2::uuid is null or term_id = $2) ${countFilter}
+       group by learner_id, term_id
+     ) t`,
+    countParams
+  );
+}
+
+async function getTypingLeaderboardWithAll(schoolId, termId, limit, offset, weekStart, weekEnd) {
+  const dateFilter = weekStart && weekEnd ? `and ts.created_at::date >= $3 and ts.created_at::date <= $4` : "";
+  const params = weekStart && weekEnd ? [schoolId, termId, weekStart, weekEnd, limit, offset] : [schoolId, termId, limit, offset];
+
+  return list(
+    `with all_learners as (
+       select u.id as learner_id, u.school_id, u.grade, u.stream, coalesce(u.full_name, u.name) as learner_name
+       from users u
+       where u.school_id = $1 and u.role = 'student' and u.deleted_at is null
+     ),
+     typing_scores as (
+       select distinct on (learner_id, school_id, term_id)
+              learner_id, school_id, term_id, wpm::numeric as score, accuracy::numeric as accuracy, created_at
+       from (
+         select learner_id, school_id, term_id, wpm, accuracy, created_at from typing_results
+         union all
+         select learner_id, school_id, term_id, wpm, accuracy, created_at from typing_attempts
+       ) typing_source
+       where school_id = $1 and ($2::uuid is null or term_id = $2) ${dateFilter}
+       order by learner_id, school_id, term_id, wpm desc, accuracy desc, created_at asc
+     ),
+     typing_ranked as (
+       select al.learner_id, al.school_id, al.grade, al.stream, al.learner_name,
+              coalesce(ts.score, 0) as score,
+              coalesce(ts.accuracy, 0) as accuracy,
+              case when ts.score is not null then
+                dense_rank() over (order by ts.score desc, ts.accuracy desc, ts.created_at asc)
+              else 0 end as rank,
+              ts.created_at
+       from all_learners al
+       left join typing_scores ts on ts.learner_id = al.learner_id
+       where ($2::uuid is null or ts.term_id = $2 or ts.term_id is null)
+     )
+     select concat('typing-', $2::text, '-', learner_id) as id, learner_id, school_id,
+            coalesce($2, (select id from terms where is_global_active = true limit 1)) as term_id,
+            'typing'::text as leaderboard_type, score, rank, created_at,
+            learner_name, grade, stream
+     from typing_ranked
+     order by score desc, rank asc, learner_name
+     limit $${params.length - 1} offset $${params.length}`,
+    params,
+    `select count(*) from users where school_id = $1 and role = 'student' and deleted_at is null`,
+    [schoolId]
+  );
+}
+
+async function getQuizLeaderboard(schoolId, termId, limit, offset, includeAll, weekStart, weekEnd) {
+  const query = includeAll ? getQuizLeaderboardWithAll : getQuizLeaderboardTop;
+  return query(schoolId, termId, limit, offset, weekStart, weekEnd);
+}
+
+async function getQuizLeaderboardTop(schoolId, termId, limit, offset, weekStart, weekEnd) {
+  const dateFilter = weekStart && weekEnd ? `and qa.created_at::date >= $3 and qa.created_at::date <= $4` : "";
+  const countFilter = weekStart && weekEnd ? `and created_at::date >= $3 and created_at::date <= $4` : "";
+  const params = weekStart && weekEnd ? [schoolId, termId, weekStart, weekEnd, limit, offset] : [schoolId, termId, limit, offset];
+  const countParams = weekStart && weekEnd ? [schoolId, termId, weekStart, weekEnd] : [schoolId, termId];
+
+  return list(
+    `with quiz_scores as (
+       select qa.learner_id, qa.school_id, qa.term_id, max(qa.score)::numeric as score, max(qa.created_at) as created_at
+       from quiz_attempts qa
+       where qa.school_id = $1 and ($2::uuid is null or qa.term_id = $2) ${dateFilter}
+       group by qa.learner_id, qa.school_id, qa.term_id
+     ),
+     quiz_ranked as (
+       select concat('quiz-', qs.term_id, '-', qs.learner_id) as id, qs.learner_id, qs.school_id, qs.term_id,
+              'quiz'::text as leaderboard_type, qs.score,
+              dense_rank() over (partition by qs.school_id, qs.term_id order by qs.score desc, qs.created_at asc)::int as rank,
+              qs.created_at
+       from quiz_scores qs
+     )
+     select c.id, c.learner_id, c.term_id, c.leaderboard_type, c.score, c.rank, c.created_at,
+            coalesce(u.full_name, u.name) as learner_name, u.grade, u.stream
+     from quiz_ranked c
+     join users u on u.id = c.learner_id
+     order by c.score desc, c.rank asc
+     limit $${params.length - 1} offset $${params.length}`,
+    params,
+    `select count(*) from (select learner_id, term_id from quiz_attempts where school_id = $1 and ($2::uuid is null or term_id = $2) ${countFilter} group by learner_id, term_id) q`,
+    countParams
+  );
+}
+
+async function getQuizLeaderboardWithAll(schoolId, termId, limit, offset, weekStart, weekEnd) {
+  const dateFilter = weekStart && weekEnd ? `and qs.created_at::date >= $3 and qs.created_at::date <= $4` : "";
+  const params = weekStart && weekEnd ? [schoolId, termId, weekStart, weekEnd, limit, offset] : [schoolId, termId, limit, offset];
+
+  return list(
+    `with all_learners as (
+       select u.id as learner_id, u.school_id, u.grade, u.stream, coalesce(u.full_name, u.name) as learner_name
+       from users u
+       where u.school_id = $1 and u.role = 'student' and u.deleted_at is null
+     ),
+     quiz_scores as (
+       select qa.learner_id, qa.school_id, qa.term_id, max(qa.score)::numeric as score, max(qa.created_at) as created_at
+       from quiz_attempts qa
+       where qa.school_id = $1 and ($2::uuid is null or qa.term_id = $2) ${dateFilter}
+       group by qa.learner_id, qa.school_id, qa.term_id
+     ),
+     quiz_ranked as (
+       select al.learner_id, al.school_id, al.grade, al.stream, al.learner_name,
+              coalesce(qs.score, 0) as score,
+              case when qs.score is not null then
+                dense_rank() over (order by qs.score desc, qs.created_at asc)
+              else 0 end as rank,
+              qs.created_at
+       from all_learners al
+       left join quiz_scores qs on qs.learner_id = al.learner_id
+       where ($2::uuid is null or qs.term_id = $2 or qs.term_id is null)
+     )
+     select concat('quiz-', $2::text, '-', learner_id) as id, learner_id, school_id,
+            coalesce($2, (select id from terms where is_global_active = true limit 1)) as term_id,
+            'quiz'::text as leaderboard_type, score, rank, created_at,
+            learner_name, grade, stream
+     from quiz_ranked
+     order by score desc, rank asc, learner_name
+     limit $${params.length - 1} offset $${params.length}`,
+    params,
+    `select count(*) from users where school_id = $1 and role = 'student' and deleted_at is null`,
+    [schoolId]
+  );
+}
+
+async function getCourseLeaderboard(schoolId, termId, limit, offset, includeAll, weekStart, weekEnd) {
+  const query = includeAll ? getCourseLeaderboardWithAll : getCourseLeaderboardTop;
+  return query(schoolId, termId, limit, offset, weekStart, weekEnd);
+}
+
+async function getCourseLeaderboardTop(schoolId, termId, limit, offset, weekStart, weekEnd) {
+  const dateFilter = weekStart && weekEnd ? `and le.created_at::date >= $3 and le.created_at::date <= $4` : "";
+  const countFilter = weekStart && weekEnd ? `and created_at::date >= $3 and created_at::date <= $4` : "";
+  const params = weekStart && weekEnd ? [schoolId, termId, weekStart, weekEnd, limit, offset] : [schoolId, termId, limit, offset];
+  const countParams = weekStart && weekEnd ? [schoolId, termId, weekStart, weekEnd] : [schoolId, termId];
+
+  return list(
+    `select le.id::text, le.learner_id, le.school_id, le.term_id, le.leaderboard_type, le.score, le.rank, le.created_at,
+            coalesce(u.full_name, u.name) as learner_name, u.grade, u.stream
+     from leaderboard_entries le
+     join users u on u.id = le.learner_id
+     where le.school_id = $1 and ($2::uuid is null or le.term_id = $2) and le.leaderboard_type not in ('quiz', 'typing') ${dateFilter}
+     order by le.leaderboard_type, le.score desc, le.rank asc
+     limit $${params.length - 1} offset $${params.length}`,
+    params,
+    `select count(*) from leaderboard_entries where school_id = $1 and ($2::uuid is null or term_id = $2) and leaderboard_type not in ('quiz', 'typing') ${countFilter}`,
+    countParams
+  );
+}
+
+async function getCourseLeaderboardWithAll(schoolId, termId, limit, offset, weekStart, weekEnd) {
+  const dateFilter = weekStart && weekEnd ? `and cs.created_at::date >= $3 and cs.created_at::date <= $4` : "";
+  const params = weekStart && weekEnd ? [schoolId, termId, weekStart, weekEnd, limit, offset] : [schoolId, termId, limit, offset];
+
+  return list(
+    `with all_learners as (
+       select u.id as learner_id, u.school_id, u.grade, u.stream, coalesce(u.full_name, u.name) as learner_name
+       from users u
+       where u.school_id = $1 and u.role = 'student' and u.deleted_at is null
+     ),
+     course_scores as (
+       select le.learner_id, le.school_id, le.term_id, le.leaderboard_type, le.score, le.rank, le.created_at
+       from leaderboard_entries le
+       where le.school_id = $1 and ($2::uuid is null or le.term_id = $2) and le.leaderboard_type not in ('quiz', 'typing') ${dateFilter}
+     ),
+     course_ranked as (
+       select al.learner_id, al.school_id, al.grade, al.stream, al.learner_name,
+              coalesce(cs.leaderboard_type, 'course') as leaderboard_type,
+              coalesce(cs.score, 0) as score,
+              coalesce(cs.rank, 0) as rank,
+              cs.created_at
+       from all_learners al
+       left join course_scores cs on cs.learner_id = al.learner_id
+       where ($2::uuid is null or cs.term_id = $2 or cs.term_id is null)
+     )
+     select concat('course-', $2::text, '-', learner_id) as id, learner_id, school_id,
+            coalesce($2, (select id from terms where is_global_active = true limit 1)) as term_id,
+            leaderboard_type, score, rank, created_at,
+            learner_name, grade, stream
+     from course_ranked
+     order by score desc, rank asc, learner_name
+     limit $${params.length - 1} offset $${params.length}`,
+    params,
+    `select count(*) from users where school_id = $1 and role = 'student' and deleted_at is null`,
+    [schoolId]
   );
 }
 

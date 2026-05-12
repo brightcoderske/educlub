@@ -25,6 +25,8 @@ import {
 import { api, assetUrl } from "../../lib/api";
 import { currentUser, logout } from "../../lib/auth";
 import ReportCard from "./ReportCard";
+import ReportsPanel from "./ReportsPanel";
+import LeaderboardsPanel from "./LeaderboardsPanel";
 
 const tabs = [
   { id: "overview", label: "Overview", icon: LayoutDashboard },
@@ -1317,27 +1319,11 @@ export default function SchoolAdminDashboard() {
         )}
 
         {!loading && activeTab === "reports" && (
-          <section className="panel">
-            <h2>Report Card Shortcuts</h2>
-            <div className="shortcut-grid">
-              <button><FileText size={18} />Generate individual</button>
-              <button><Users size={18} />Generate class</button>
-              <button><BookOpen size={18} />Generate whole school</button>
-            </div>
-            <EmptyState title="Report generation is ready for live data wiring" detail="The report shell is present; PDF generation will be connected once learner/course scoring flows are complete." />
-          </section>
+          <ReportsPanel schoolId={state.profile?.school_id} learners={state.learners} streams={state.streams} terms={state.terms} />
         )}
 
         {!loading && activeTab === "leaderboards" && (
-          <section className="panel">
-            <h2>School Leaderboards</h2>
-            <DataTable rows={state.leaderboards} emptyTitle="No leaderboard entries yet" columns={[
-              { key: "leaderboard_type", label: "Type" },
-              { key: "rank", label: "Rank" },
-              { key: "learner_name", label: "Learner" },
-              { key: "score", label: "Score" }
-            ]} />
-          </section>
+          <LeaderboardsPanel schoolId={state.profile?.school_id} terms={state.terms} />
         )}
 
         {!loading && activeTab === "preferences" && (

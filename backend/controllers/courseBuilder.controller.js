@@ -57,6 +57,16 @@ const reorderActivityBlocks = wrap(async (req, res) =>
 
 const activityTypes = wrap(async (req, res) => res.json({ types: courseBuilder.ACTIVITY_TYPES }));
 
+const importFromJSX = wrap(async (req, res) => {
+  if (!req.file) {
+    res.status(400);
+    throw new Error("No file uploaded");
+  }
+  const jsxContent = req.file.buffer.toString("utf-8");
+  const result = await courseBuilder.importFromJSX(req.params.id, jsxContent, req.user);
+  res.json(result);
+});
+
 module.exports = {
   getBlueprint,
   patchCourse,
@@ -72,5 +82,6 @@ module.exports = {
   updateActivityBlock,
   deleteActivityBlock,
   reorderActivityBlocks,
-  activityTypes
+  activityTypes,
+  importFromJSX
 };
