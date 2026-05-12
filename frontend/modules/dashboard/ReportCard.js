@@ -91,15 +91,24 @@ function LineChart({ data, valueKey, label, yLabel, note }) {
   const width = 280;
   const height = 160;
   const padding = { top: 20, right: 20, bottom: 40, left: 40 };
-  const maxVal = Math.max(...data.map(d => d[valueKey]), 100);
+  const rows = Array.isArray(data) ? data.filter((item) => Number.isFinite(Number(item[valueKey]))) : [];
+  if (!rows.length) {
+    return (
+      <div style={{ height: "160px", display: "flex", alignItems: "center", justifyContent: "center", color: "#667085", fontSize: "12px", textAlign: "center", padding: "12px" }}>
+        No {label.toLowerCase()} trend data recorded for this term yet.
+      </div>
+    );
+  }
+  const maxVal = Math.max(...rows.map(d => Number(d[valueKey])), valueKey === "score" ? 100 : 10);
   const minVal = 0;
   const range = maxVal - minVal || 1;
-  const xStep = (width - padding.left - padding.right) / (data.length - 1 || 1);
+  const xStep = (width - padding.left - padding.right) / (rows.length - 1 || 1);
 
-  const points = data.map((d, i) => {
-    const x = padding.left + i * xStep;
-    const y = padding.top + (height - padding.top - padding.bottom) * (1 - (d[valueKey] - minVal) / range);
-    return { x, y, value: d[valueKey], week: d.week };
+  const points = rows.map((d, i) => {
+    const x = rows.length === 1 ? width / 2 : padding.left + i * xStep;
+    const value = Number(d[valueKey]);
+    const y = padding.top + (height - padding.top - padding.bottom) * (1 - (value - minVal) / range);
+    return { x, y, value, week: d.week || i + 1 };
   });
 
   const linePath = points.map((p, i) => `${i === 0 ? "M" : "L"}${p.x},${p.y}`).join(" ");
@@ -123,12 +132,11 @@ function LineChart({ data, valueKey, label, yLabel, note }) {
         {points.map((p, i) => (
           <g key={i}>
             <circle cx={p.x} cy={p.y} r="4" fill="#003b8f" stroke="#fff" strokeWidth="2" />
-            <text x={p.x} y={p.y - 10} textAnchor="middle" style={{ fontSize: "10px", fontWeight: 600, fill: "#003b8f" }}>{p.value}</text>
+            <text x={p.x} y={p.y - 10} textAnchor="middle" style={{ fontSize: "10px", fontWeight: 600, fill: "#003b8f" }}>{Number(p.value).toFixed(valueKey === "score" ? 1 : 0)}</text>
           </g>
         ))}
-        {/* X axis labels */}
-        {data.map((d, i) => (
-          <text key={i} x={padding.left + i * xStep} y={height - padding.bottom + 16} textAnchor="middle" style={{ fontSize: "9px", fill: "#666" }}>Week {d.week}</text>
+        {rows.map((d, i) => (
+          <text key={i} x={rows.length === 1 ? width / 2 : padding.left + i * xStep} y={height - padding.bottom + 16} textAnchor="middle" style={{ fontSize: "9px", fill: "#666" }}>Week {d.week || i + 1}</text>
         ))}
       </svg>
       {note && <p style={{ fontSize: "10px", color: "#888", marginTop: "4px", fontStyle: "italic" }}>{note}</p>}
@@ -139,6 +147,9 @@ function LineChart({ data, valueKey, label, yLabel, note }) {
 export default function ReportCard({ data = sampleData, onClose }) {
   const cardRef = useRef(null);
   const [imgLoadError, setImgLoadError] = useState(false);
+  const course = data.course || { name: "Current Course", modules: [] };
+  const modules = Array.isArray(course.modules) ? course.modules : [];
+  const learnerName = data.learner?.full_name || "Learner";
 
   // Keep a helper to decide badge colours (still needed for inline styles)
   const overallClass = {
@@ -168,7 +179,7 @@ export default function ReportCard({ data = sampleData, onClose }) {
           {/* HEADER */}
           <div className="header" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "16px" }}>
             <div className="header-left" style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-              {data.school.logo_url && !imgLoadError ? (
+              {data.school?.logo_url && !imgLoadError ? (
                 <img
                   src={data.school.logo_url}
                   alt="School logo"
@@ -181,9 +192,9 @@ export default function ReportCard({ data = sampleData, onClose }) {
               )}
             </div>
             <div className="header-center" style={{ textAlign: "center", flex: 1 }}>
-              <h1 style={{ fontSize: "22px", fontWeight: 800, color: "#003b8f", margin: 0, textTransform: "uppercase", letterSpacing: "1px" }}>{data.school.name}</h1>
+              <h1 style={{ fontSize: "22px", fontWeight: 800, color: "#003b8f", margin: 0, textTransform: "uppercase", letterSpacing: "1px" }}>{data.school?.name || "School"}</h1>
               <p className="club" style={{ fontSize: "13px", color: "#003b8f", fontWeight: 600, margin: "2px 0" }}>COMPUTER CLUB</p>
-              <p className="term" style={{ fontSize: "12px", color: "#555", margin: 0 }}>{data.term.year} – {data.term.name.toUpperCase()}</p>
+              <p className="term" style={{ fontSize: "12px", color: "#555", margin: 0 }}>{data.term?.year || ""} – {String(data.term?.name || "Term").toUpperCase()}</p>
             </div>
             <div className="header-right" style={{ textAlign: "right" }}>
               <div className="educlub-logo" style={{ fontSize: "18px", fontWeight: 800, color: "#003b8f" }}>eduClub</div>
@@ -196,12 +207,12 @@ export default function ReportCard({ data = sampleData, onClose }) {
           {/* STUDENT DETAILS CARD */}
           <div className="student-card" style={{ border: "1px solid #d0d8e8", borderRadius: "12px", padding: "16px", marginBottom: "16px", display: "flex", justifyContent: "space-between", alignItems: "flex-start", boxShadow: "0 2px 8px rgba(0,0,0,0.05)" }}>
             <div className="student-details" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px 20px", flex: 1 }}>
-              <div><span className="label" style={{ fontSize: "11px", color: "#888", fontWeight: 500 }}>Student Name</span><div className="value" style={{ fontSize: "13px", color: "#1a1a2e", fontWeight: 600 }}>{data.learner.full_name}</div></div>
-              <div><span className="label" style={{ fontSize: "11px", color: "#888", fontWeight: 500 }}>Class</span><div className="value" style={{ fontSize: "13px", color: "#1a1a2e", fontWeight: 600 }}>Grade {data.learner.grade}{data.learner.stream ? ` - ${data.learner.stream}` : ""}</div></div>
-              <div><span className="label" style={{ fontSize: "11px", color: "#888", fontWeight: 500 }}>Lead Tutor</span><div className="value" style={{ fontSize: "13px", color: "#1a1a2e", fontWeight: 600 }}>{data.tutors.lead}</div></div>
-              <div><span className="label" style={{ fontSize: "11px", color: "#888", fontWeight: 500 }}>Assistant Tutor</span><div className="value" style={{ fontSize: "13px", color: "#1a1a2e", fontWeight: 600 }}>{data.tutors.assistant}</div></div>
-              <div><span className="label" style={{ fontSize: "11px", color: "#888", fontWeight: 500 }}>Member ID</span><div className="value" style={{ fontSize: "13px", color: "#1a1a2e", fontWeight: 600 }}>{data.learner.member_id}</div></div>
-              <div><span className="label" style={{ fontSize: "11px", color: "#888", fontWeight: 500 }}>Attendance</span><div className="value" style={{ fontSize: "13px", color: "#1a1a2e", fontWeight: 600 }}>{data.learner.attendance}</div></div>
+              <div><span className="label" style={{ fontSize: "11px", color: "#888", fontWeight: 500 }}>Student Name</span><div className="value" style={{ fontSize: "13px", color: "#1a1a2e", fontWeight: 600 }}>{learnerName}</div></div>
+              <div><span className="label" style={{ fontSize: "11px", color: "#888", fontWeight: 500 }}>Class</span><div className="value" style={{ fontSize: "13px", color: "#1a1a2e", fontWeight: 600 }}>Grade {data.learner?.grade || "-"}{data.learner?.stream ? ` - ${data.learner.stream}` : ""}</div></div>
+              <div><span className="label" style={{ fontSize: "11px", color: "#888", fontWeight: 500 }}>Lead Tutor</span><div className="value" style={{ fontSize: "13px", color: "#1a1a2e", fontWeight: 600 }}>{data.tutors?.lead || "-"}</div></div>
+              <div><span className="label" style={{ fontSize: "11px", color: "#888", fontWeight: 500 }}>Assistant Tutor</span><div className="value" style={{ fontSize: "13px", color: "#1a1a2e", fontWeight: 600 }}>{data.tutors?.assistant || "-"}</div></div>
+              <div><span className="label" style={{ fontSize: "11px", color: "#888", fontWeight: 500 }}>Member ID</span><div className="value" style={{ fontSize: "13px", color: "#1a1a2e", fontWeight: 600 }}>{data.learner?.member_id || data.learner?.username || "-"}</div></div>
+              <div><span className="label" style={{ fontSize: "11px", color: "#888", fontWeight: 500 }}>Attendance</span><div className="value" style={{ fontSize: "13px", color: "#1a1a2e", fontWeight: 600 }}>{data.learner?.attendance || "-"}</div></div>
               <div style={{ gridColumn: "1 / -1" }}>
                 <span className="label" style={{ fontSize: "11px", color: "#888", fontWeight: 500 }}>Overall Performance</span>
                 <div style={{ marginTop: "4px" }}>
@@ -213,10 +224,10 @@ export default function ReportCard({ data = sampleData, onClose }) {
             </div>
             <div className="student-avatar" style={{ textAlign: "center", minWidth: "100px" }}>
               <div className="avatar-circle" style={{ width: "60px", height: "60px", borderRadius: "50%", background: "#003b8f", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "24px", fontWeight: 700, margin: "0 auto 8px" }}>
-                {data.learner.full_name.charAt(0).toUpperCase()}
+                {learnerName.charAt(0).toUpperCase()}
               </div>
-              <div className="name" style={{ fontSize: "14px", fontWeight: 700, color: "#003b8f", textTransform: "uppercase" }}>{data.learner.full_name}</div>
-              <div className="class" style={{ fontSize: "11px", color: "#666" }}>Grade {data.learner.grade}</div>
+              <div className="name" style={{ fontSize: "14px", fontWeight: 700, color: "#003b8f", textTransform: "uppercase" }}>{learnerName}</div>
+              <div className="class" style={{ fontSize: "11px", color: "#666" }}>Grade {data.learner?.grade || "-"}</div>
             </div>
           </div>
 
@@ -256,7 +267,7 @@ export default function ReportCard({ data = sampleData, onClose }) {
             <div className="course-header" style={{ background: "linear-gradient(135deg, #002b72, #003b8f)", color: "#fff", padding: "10px 14px", display: "flex", alignItems: "center", gap: "8px" }}>
               <span style={{ fontSize: "16px" }}>📘</span>
               <div className="title" style={{ fontSize: "13px", fontWeight: 700 }}>
-                3. ACTIVE COURSE: <span className="course-name" style={{ color: "#f5a400", fontWeight: 800 }}>{data.course.name.toUpperCase()}</span>
+                3. ACTIVE COURSE: <span className="course-name" style={{ color: "#f5a400", fontWeight: 800 }}>{course.name.toUpperCase()}</span>
               </div>
             </div>
             <table className="course-table" style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -268,7 +279,7 @@ export default function ReportCard({ data = sampleData, onClose }) {
                 </tr>
               </thead>
               <tbody>
-                {data.course.modules.map((mod, idx) => (
+                {modules.length ? modules.map((mod, idx) => (
                   <tr key={idx}>
                     <td style={{ fontSize: "12px", padding: "8px 10px", borderBottom: "1px solid #eef4ff", fontWeight: 500 }}>{idx + 1}. {mod.name}</td>
                     <td style={{ fontSize: "12px", padding: "8px 10px", borderBottom: "1px solid #eef4ff", color: "#555" }}>{mod.description}</td>
@@ -278,7 +289,11 @@ export default function ReportCard({ data = sampleData, onClose }) {
                       </span>
                     </td>
                   </tr>
-                ))}
+                )) : (
+                  <tr>
+                    <td colSpan="3" style={{ fontSize: "12px", padding: "12px", textAlign: "center", color: "#667085" }}>No lesson scores recorded for this course yet.</td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>

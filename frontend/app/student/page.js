@@ -148,7 +148,7 @@ function DataTable({ rows, columns, emptyTitle }) {
         </thead>
         <tbody>
           {rows.map((row, index) => (
-            <tr key={rowKey(row, index)}>
+            <tr key={`${rowKey(row, index)}-${index}`}>
               {columns.map((column) => <td key={column.key}>{column.render ? column.render(row) : row[column.key]}</td>)}
             </tr>
           ))}

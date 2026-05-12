@@ -576,6 +576,27 @@ function escapeHtml(value) {
     .replace(/'/g, "&#039;");
 }
 
+function reportChartSvg(rows, valueKey, title, suffix = "") {
+  const data = Array.isArray(rows) ? rows.filter((row) => Number.isFinite(Number(row[valueKey]))) : [];
+  if (!data.length) return `<div class="empty-chart">No ${escapeHtml(title.toLowerCase())} trend data recorded.</div>`;
+  const width = 320;
+  const height = 150;
+  const padding = 28;
+  const max = Math.max(...data.map((row) => Number(row[valueKey])), valueKey === "score" ? 100 : 10);
+  const points = data.map((row, index) => {
+    const x = data.length === 1 ? width / 2 : padding + (index * (width - padding * 2)) / (data.length - 1);
+    const y = height - padding - (Number(row[valueKey]) / max) * (height - padding * 2);
+    return { x, y, value: Number(row[valueKey]), week: row.week || index + 1 };
+  });
+  const path = points.map((point, index) => `${index === 0 ? "M" : "L"}${point.x},${point.y}`).join(" ");
+  return `<svg class="report-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(title)}">
+    <line x1="${padding}" y1="${height - padding}" x2="${width - padding}" y2="${height - padding}" />
+    <line x1="${padding}" y1="${padding}" x2="${padding}" y2="${height - padding}" />
+    <path d="${path}" />
+    ${points.map((point) => `<g><circle cx="${point.x}" cy="${point.y}" r="4" /><text x="${point.x}" y="${point.y - 8}">${escapeHtml(point.value.toFixed(valueKey === "score" ? 1 : 0))}${escapeHtml(suffix)}</text><text x="${point.x}" y="${height - 8}">W${escapeHtml(point.week)}</text></g>`).join("")}
+  </svg>`;
+}
+
 function buildReportHtml(detail) {
   const report = detail.report || {};
   const learner = report.learner || detail.learner;
@@ -585,7 +606,9 @@ function buildReportHtml(detail) {
   const courseRows = (report.courses || []).map((course) => `<tr><td>${escapeHtml(course.course_name)}</td><td>${escapeHtml(course.status)}</td><td>${escapeHtml(course.term_name)}</td></tr>`).join("");
   const quizRows = (detail.quiz_results || []).map((quiz) => `<tr><td>${escapeHtml(quiz.quiz_title || "Untitled quiz")}</td><td>${escapeHtml(quiz.score)}</td><td>${escapeHtml(quiz.created_at ? new Date(quiz.created_at).toLocaleDateString() : "")}</td></tr>`).join("");
   const typingRows = (detail.typing_results || []).map((typing) => `<tr><td>${escapeHtml(typing.wpm)}</td><td>${escapeHtml(typing.accuracy)}</td><td>${escapeHtml(typing.created_at ? new Date(typing.created_at).toLocaleDateString() : "")}</td></tr>`).join("");
-  const progressRows = (detail.lesson_progress || []).map((item) => `<tr><td>${escapeHtml(item.course_name)}</td><td>${escapeHtml(item.module_name)}</td><td>${escapeHtml(item.lesson_name)}</td><td>${escapeHtml(item.score)}</td></tr>`).join("");
+  const progressRows = (detail.lesson_progress || []).map((item) => `<tr><td>${escapeHtml(item.course_name)}</td><td>${escapeHtml(item.module_name)}</td><td>${escapeHtml(item.lesson_name)}</td><td>${escapeHtml(item.score)}</td><td>${escapeHtml(item.score == null ? "-" : item.score <= 50 ? "APPROACHING" : item.score <= 80 ? "MEETING" : "EXCEEDING")}</td></tr>`).join("");
+  const typingWeekly = detail.typing_weekly || [];
+  const quizWeekly = detail.quiz_weekly || [];
 
   return `<!doctype html>
 <html>
@@ -601,6 +624,15 @@ function buildReportHtml(detail) {
     th, td { border: 1px solid #d8e1ef; padding: 8px; text-align: left; }
     th { background: #eef4ff; }
     .meta { color: #536172; }
+    .overall { display: inline-block; background: #1d5fc4; color: #fff; border-radius: 999px; padding: 5px 12px; font-size: 12px; font-weight: 700; text-transform: uppercase; }
+    .chart-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 12px 0 24px; }
+    .chart-card { border: 1px solid #d8e1ef; border-radius: 10px; padding: 12px; }
+    .report-chart { width: 100%; height: auto; }
+    .report-chart line { stroke: #c9d5e7; }
+    .report-chart path { fill: none; stroke: #003b8f; stroke-width: 2; }
+    .report-chart circle { fill: #003b8f; }
+    .report-chart text { font-size: 10px; fill: #334155; text-anchor: middle; }
+    .empty-chart { color: #667085; font-size: 12px; padding: 36px 12px; text-align: center; }
   </style>
 </head>
 <body>
@@ -611,7 +643,12 @@ function buildReportHtml(detail) {
       <p class="meta">${escapeHtml(school.name || "")}</p>
       <p class="meta">Username: ${escapeHtml(learner.username)} | Grade ${escapeHtml(learner.grade)}${learner.stream ? ` | ${escapeHtml(learner.stream)}` : ""}</p>
       <p class="meta">Term: ${term ? `${escapeHtml(term.year)} ${escapeHtml(term.name)}` : "No selected term"}</p>
+      <p><span class="overall">${escapeHtml(report.overall_performance || "Meets Expectation")}</span></p>
     </div>
+  </div>
+  <div class="chart-grid">
+    <section class="chart-card"><h2>Typing Trend</h2>${reportChartSvg(typingWeekly, "wpm", "Typing trend")}</section>
+    <section class="chart-card"><h2>Quiz Trend</h2>${reportChartSvg(quizWeekly, "score", "Quiz trend", "%")}</section>
   </div>
   <h2>Course Report</h2>
   <table><thead><tr><th>Course</th><th>Status</th><th>Term</th></tr></thead><tbody>${courseRows || "<tr><td colspan=\"3\">No course records for this term.</td></tr>"}</tbody></table>
@@ -622,7 +659,7 @@ function buildReportHtml(detail) {
   <p>Average WPM: ${report.typing_summary?.average_wpm == null ? "No attempts" : Number(report.typing_summary.average_wpm).toFixed(1)} | Average accuracy: ${report.typing_summary?.average_accuracy == null ? "No attempts" : `${Number(report.typing_summary.average_accuracy).toFixed(1)}%`}</p>
   <table><thead><tr><th>WPM</th><th>Accuracy</th><th>Date</th></tr></thead><tbody>${typingRows || "<tr><td colspan=\"3\">No typing records for this term.</td></tr>"}</tbody></table>
   <h2>Lesson Progress</h2>
-  <table><thead><tr><th>Course</th><th>Module</th><th>Lesson</th><th>Score</th></tr></thead><tbody>${progressRows || "<tr><td colspan=\"4\">No lesson progress yet.</td></tr>"}</tbody></table>
+  <table><thead><tr><th>Course</th><th>Module</th><th>Lesson</th><th>Score</th><th>Performance</th></tr></thead><tbody>${progressRows || "<tr><td colspan=\"5\">No lesson progress yet.</td></tr>"}</tbody></table>
   <h2>Teacher Remarks</h2>
   <p>${escapeHtml(report.teacher_remarks || "No published remarks for this term.")}</p>
 </body>
@@ -1174,7 +1211,7 @@ export default function SchoolAdminDashboard() {
                   overall_performance: learnerDetail?.report?.overall_performance || "Meets Expectation",
                   typing_weekly: learnerDetail?.typing_weekly || [],
                   quiz_weekly: learnerDetail?.quiz_weekly || [],
-                  course: learnerDetail?.course || { name: "Web Development", modules: [] },
+                  course: learnerDetail?.course || learnerDetail?.report?.course || { name: "Current Course", modules: [] },
                   teacher_feedback: learnerDetail?.report?.teacher_remarks || "No feedback yet.",
                   generated_at: new Date().toLocaleDateString("en-US", { weekday: "short", year: "numeric", month: "short", day: "numeric" })
                 }}

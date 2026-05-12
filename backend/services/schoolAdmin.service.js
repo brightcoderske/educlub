@@ -1228,7 +1228,7 @@ async function learnerDetail(user, learnerId, params = {}) {
   const enrolmentLearnerIds = [learnerId, learnerProfile?.id].filter(Boolean);
   const termId = term?.id || null;
 
-  const [enrolments, submissions, reports, typing, quizzes, progress, quizTrend] = await Promise.all([
+  const [enrolments, submissions, reports, typing, quizzes, progress, quizTrend, typingTrend] = await Promise.all([
     query(
       `select e.id, e.status, e.created_at, coalesce(c.name, c.title) as course_name, coalesce(t.label, t.name::text) as term_name, ay.year
        from enrolments e
@@ -1301,8 +1301,72 @@ async function learnerDetail(user, learnerId, params = {}) {
        group by date_trunc('week', qa.created_at)::date
        order by week_start`,
       [schoolId, learnerId, termId]
+    ),
+    query(
+      `select date_trunc('week', ta.created_at)::date as week_start,
+              avg(ta.wpm)::numeric as average_wpm,
+              avg(ta.accuracy)::numeric as average_accuracy,
+              count(*)::int as attempts
+       from typing_attempts ta
+       where ta.school_id = $1 and ta.learner_id = $2 and ($3::uuid is null or ta.term_id = $3)
+       group by date_trunc('week', ta.created_at)::date
+       order by week_start`,
+      [schoolId, learnerId, termId]
     )
   ]);
+
+  const typingWeekly = typingTrend.rows.map((row, index) => ({
+    week: index + 1,
+    wpm: Math.round(Number(row.average_wpm || 0)),
+    accuracy: Math.round(Number(row.average_accuracy || 0))
+  }));
+
+  const quizWeekly = quizTrend.rows.map((row, index) => ({
+    week: index + 1,
+    score: Math.round(Number(row.average_score || 0))
+  }));
+
+  const quizAvg = averageNumber(quizzes.rows, "score");
+  const typingAvg = averageNumber(typing.rows, "wpm");
+  const overallPerformance = (() => {
+    if (quizAvg == null && typingAvg == null) return "Approaching Expectation";
+    const quizNorm = quizAvg != null ? quizAvg : 0;
+    const typingNorm = typingAvg != null ? Math.min(typingAvg / 50 * 100, 100) : 0;
+    const combined = (quizNorm * 0.6) + (typingNorm * 0.4);
+    if (combined <= 50) return "Approaching Expectation";
+    if (combined <= 80) return "Meets Expectation";
+    return "Exceeds Expectation";
+  })();
+
+  const modulePerformance = {};
+  for (const item of progress.rows) {
+    if (!item.module_name) continue;
+    const score = Number(item.score);
+    if (!Number.isFinite(score)) continue;
+    if (!modulePerformance[item.module_name]) {
+      modulePerformance[item.module_name] = { total: 0, count: 0, course_name: item.course_name };
+    }
+    modulePerformance[item.module_name].total += score;
+    modulePerformance[item.module_name].count += 1;
+  }
+
+  const courseModules = Object.entries(modulePerformance).map(([name, data]) => {
+    const avg = data.total / data.count;
+    let performance;
+    if (avg <= 50) performance = "APPROACHING";
+    else if (avg <= 80) performance = "MEETING";
+    else performance = "EXCEEDING";
+    return { name, description: "", performance };
+  });
+
+  const primaryCourseName = enrolments.rows[0]?.course_name || "Course";
+
+  const course = {
+    name: primaryCourseName,
+    modules: courseModules.length
+      ? courseModules
+      : [{ name: "No modules started", description: "Complete lessons to see module performance.", performance: "APPROACHING" }]
+  };
 
   const report = {
     learner,
@@ -1311,18 +1375,19 @@ async function learnerDetail(user, learnerId, params = {}) {
     courses: enrolments.rows,
     typing_summary: {
       attempts: typing.rows.length,
-      average_wpm: averageNumber(typing.rows, "wpm"),
+      average_wpm: typingAvg,
       average_accuracy: averageNumber(typing.rows, "accuracy")
     },
     quiz_summary: {
       attempts: quizzes.rows.length,
-      average_score: averageNumber(quizzes.rows, "score")
+      average_score: quizAvg
     },
     lesson_progress: progress.rows,
     weekly_quiz_trend: quizTrend.rows,
     submissions: submissions.rows,
     teacher_remarks: reports.rows[0]?.teacher_remarks || null,
-    published_report: reports.rows[0] || null
+    published_report: reports.rows[0] || null,
+    overall_performance: overallPerformance
   };
 
   return {
@@ -1336,6 +1401,9 @@ async function learnerDetail(user, learnerId, params = {}) {
     quiz_results: quizzes.rows,
     lesson_progress: progress.rows,
     weekly_quiz_trend: quizTrend.rows,
+    typing_weekly: typingWeekly,
+    quiz_weekly: quizWeekly,
+    course,
     report
   };
 }

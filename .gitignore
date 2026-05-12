@@ -13,3 +13,4 @@ backend/uploads/report-cards/*
 !backend/uploads/learner-files/.gitkeep
 !backend/uploads/report-cards/.gitkeep
 .aider*
+.cursor
