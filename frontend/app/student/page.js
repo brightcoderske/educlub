@@ -108,28 +108,129 @@ function TrendChart({ rows, valueKey = "average_score", valueLabel = "Score" }) 
   if (!rows?.length) return <EmptyState title="No weekly quiz trend yet." />;
   const width = 520;
   const height = 170;
-  const padding = 26;
+  const padding = 30;
+  const chartHeight = height - padding * 2;
+  const chartWidth = width - padding * 2;
+
+  const maxValue = Math.max(...rows.map(r => Number(r[valueKey] || 0)), 100);
   const points = rows.map((row, index) => {
-    const x = rows.length === 1 ? width / 2 : padding + (index * (width - padding * 2)) / (rows.length - 1);
-    const y = height - padding - (Number(row[valueKey] || 0) / 100) * (height - padding * 2);
-    return `${x},${y}`;
-  }).join(" ");
+    const x = rows.length === 1 ? width / 2 : padding + (index * chartWidth) / (rows.length - 1);
+    const y = height - padding - (Number(row[valueKey] || 0) / maxValue) * chartHeight;
+    return { x, y, value: Number(row[valueKey] || 0) };
+  });
+
+  const pointsStr = points.map(p => `${p.x},${p.y}`).join(" ");
+  const gradientId = `trend-gradient-${valueKey}`;
+
   return (
     <div className="student-trend-chart">
       <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Weekly quiz trend">
-        <text x={width / 2} y={height - 4} textAnchor="middle">{valueLabel} by week</text>
-        <text x="12" y={height / 2} textAnchor="middle" transform={`rotate(-90 12 ${height / 2})`}>{valueLabel}</text>
-        <line x1={padding} y1={height - padding} x2={width - padding} y2={height - padding} />
-        <line x1={padding} y1={padding} x2={padding} y2={height - padding} />
-        <polyline points={points} />
-        {rows.map((row, index) => {
-          const x = rows.length === 1 ? width / 2 : padding + (index * (width - padding * 2)) / (rows.length - 1);
-          const y = height - padding - (Number(row[valueKey] || 0) / 100) * (height - padding * 2);
-          return <circle key={row.week_start || index} cx={x} cy={y} r="5" />;
+        <defs>
+          <linearGradient id={gradientId} x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.3" />
+            <stop offset="100%" stopColor="#3b82f6" stopOpacity="0" />
+          </linearGradient>
+        </defs>
+
+        {/* Grid lines */}
+        {[0, 25, 50, 75, 100].map(percent => {
+          const y = height - padding - (percent / 100) * chartHeight;
+          return (
+            <line
+              key={`grid-${percent}`}
+              x1={padding}
+              y1={y}
+              x2={width - padding}
+              y2={y}
+              stroke="#e2e8f0"
+              strokeWidth="1"
+              strokeDasharray="4,4"
+            />
+          );
         })}
+
+        {/* Y-axis labels */}
+        {[0, 25, 50, 75, 100].map(percent => {
+          const y = height - padding - (percent / 100) * chartHeight;
+          return (
+            <text
+              key={`ylabel-${percent}`}
+              x={padding - 8}
+              y={y + 4}
+              textAnchor="end"
+              fontSize="10"
+              fill="#94a3b8"
+              fontWeight="500"
+            >
+              {percent}
+            </text>
+          );
+        })}
+
+        {/* X-axis labels */}
+        {points.map((p, index) => (
+          <text
+            key={`xlabel-${index}`}
+            x={p.x}
+            y={height - padding + 15}
+            textAnchor="middle"
+            fontSize="10"
+            fill="#94a3b8"
+            fontWeight="500"
+          >
+            W{index + 1}
+          </text>
+        ))}
+
+        {/* Axis lines */}
+        <line x1={padding} y1={height - padding} x2={width - padding} y2={height - padding} stroke="#cbd5e1" strokeWidth="2" />
+        <line x1={padding} y1={padding} x2={padding} y2={height - padding} stroke="#cbd5e1" strokeWidth="2" />
+
+        {/* Area fill */}
+        <polygon
+          points={`${padding},${height - padding} ${pointsStr} ${points[points.length - 1].x},${height - padding}`}
+          fill={`url(#${gradientId})`}
+        />
+
+        {/* Line */}
+        <polyline
+          points={pointsStr}
+          fill="none"
+          stroke="#3b82f6"
+          strokeWidth="3"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+
+        {/* Data points with labels */}
+        {points.map((p, index) => (
+          <g key={`point-${index}`}>
+            <circle
+              cx={p.x}
+              cy={p.y}
+              r="6"
+              fill="#fff"
+              stroke="#3b82f6"
+              strokeWidth="3"
+              style={{ cursor: "pointer" }}
+            />
+            <text
+              x={p.x}
+              y={p.y - 12}
+              textAnchor="middle"
+              fontSize="11"
+              fill="#1e40af"
+              fontWeight="700"
+            >
+              {p.value.toFixed(1)}
+            </text>
+          </g>
+        ))}
       </svg>
       <div className="student-trend-labels">
-        {rows.map((row, index) => <span key={row.week_start || index}>Week {index + 1}: {Number(row[valueKey] || 0).toFixed(1)}</span>)}
+        {points.map((p, index) => (
+          <span key={index}>Week {index + 1}: {p.value.toFixed(1)}</span>
+        ))}
       </div>
     </div>
   );
@@ -180,29 +281,115 @@ function LiveReportCard({ report }) {
       </div>
       <section>
         <h3>Courses</h3>
-        <DataTable rows={report.courses} emptyTitle="No courses allocated for this term." columns={[
-          { key: "course_name", label: "Course" },
-          { key: "club", label: "Club", render: (row) => row.club || "-" },
-          { key: "status", label: "Status" },
-          { key: "term_name", label: "Term" }
-        ]} />
+        {report.courses?.length ? (
+          <div className="student-section" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))" }}>
+            {report.courses.map((course, index) => (
+              <div key={`course-${index}`} className="student-course-card" style={{ cursor: "default" }}>
+                <h3>{course.course_name || "Untitled Course"}</h3>
+                <div className="course-meta">
+                  <span>{course.club || "No club"}</span>
+                  <span>{course.status || "Active"}</span>
+                  <span>{course.term_name || "Current term"}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : <EmptyState title="No courses allocated for this term." />}
       </section>
       <section>
         <h3>Assessments</h3>
-        <DataTable rows={report.quiz_results} emptyTitle="No quiz attempts for this term." columns={[
-          { key: "quiz_title", label: "Quiz", render: (row) => row.quiz_title || "Untitled quiz" },
-          { key: "score", label: "Score", render: (row) => numberLabel(row.score) },
-          { key: "created_at", label: "Date", render: (row) => formatDate(row.created_at) }
-        ]} />
+        {report.quiz_results?.length ? (
+          <div className="student-section" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))" }}>
+            {report.quiz_results.map((quiz, index) => (
+              <div key={`quiz-${index}`} className="student-quiz-card" style={{ cursor: "default" }}>
+                <h3>{quiz.quiz_title || "Untitled Quiz"}</h3>
+                <div className="quiz-meta">
+                  <span>{formatDate(quiz.created_at)}</span>
+                </div>
+                <div className="quiz-score">{numberLabel(quiz.score)}%</div>
+              </div>
+            ))}
+          </div>
+        ) : <EmptyState title="No quiz attempts for this term." />}
       </section>
       <section>
         <h3>Leaderboard</h3>
-        <DataTable rows={report.leaderboards} emptyTitle="No leaderboard placement yet." columns={[
-          { key: "leaderboard_type", label: "Type" },
-          { key: "rank", label: "Rank" },
-          { key: "score", label: "Score", render: (row) => numberLabel(row.score) }
-        ]} />
+        {report.leaderboards?.length ? (
+          <div className="student-leaderboard-card">
+            <h3>Leaderboard Rankings</h3>
+            {report.leaderboards.map((entry, index) => (
+              <div key={`leaderboard-${index}`} className={`leaderboard-row ${index < 3 ? "highlight" : ""}`}>
+                <div className="leaderboard-rank">#{entry.rank || "-"}</div>
+                <div className="leaderboard-name">{entry.leaderboard_type || "Category"}</div>
+                <div className="leaderboard-score">{numberLabel(entry.score)}</div>
+              </div>
+            ))}
+          </div>
+        ) : <EmptyState title="No leaderboard placement yet." />}
       </section>
+    </div>
+  );
+}
+
+function QuizCard({ quiz, onTake }) {
+  return (
+    <div className="student-quiz-card">
+      <h3>{quiz.title || "Untitled Quiz"}</h3>
+      <div className="quiz-meta">
+        <span>{quiz.attempts_used || 0}/{quiz.max_attempts || 3} attempts</span>
+        {quiz.best_score != null && <span>Best: {Number(quiz.best_score).toFixed(1)}%</span>}
+      </div>
+      {quiz.best_score != null && <div className="quiz-score">{Number(quiz.best_score).toFixed(1)}%</div>}
+      {quiz.can_attempt && <button type="button" onClick={() => onTake(quiz.quiz_id)}>Take Quiz</button>}
+    </div>
+  );
+}
+
+function TypingCard({ test, onStart }) {
+  return (
+    <div className="student-typing-card">
+      <h3>{test.title || "Typing Test"}</h3>
+      <div className="typing-stats">
+        <div className="typing-stat">
+          <strong>{test.best_wpm == null ? "-" : Number(test.best_wpm).toFixed(1)}</strong>
+          <span>Best WPM</span>
+        </div>
+        <div className="typing-stat">
+          <strong>{test.attempts_used || 0}/{test.max_attempts || 3}</strong>
+          <span>Attempts</span>
+        </div>
+      </div>
+      {Number(test.attempts_used || 0) < Number(test.max_attempts || 3) && <button type="button" onClick={() => onStart(test.typing_test_id)}>Start Test</button>}
+    </div>
+  );
+}
+
+function BadgeCard({ badge }) {
+  return (
+    <div className="student-badge-card">
+      <div className="badge-icon"><Award size={32} /></div>
+      <h3>{badge.leaderboard_type || "Badge"}</h3>
+      <div className="badge-date">{formatDate(badge.created_at)}</div>
+    </div>
+  );
+}
+
+function CourseCard({ course, onOpen }) {
+  const progress = course.progress || 0;
+  return (
+    <div className="student-course-card" onClick={() => onOpen(course)}>
+      <h3>{course.course_name || "Untitled Course"}</h3>
+      <div className="course-meta">
+        <span>{course.club || "No club"}</span>
+        <span>{course.status || "Active"}</span>
+        <span>{course.term_name || "Current term"}</span>
+      </div>
+      <div className="course-progress">
+        <div className="progress-bar">
+          <div className="progress-fill" style={{ width: `${Math.min(progress, 100)}%` }} />
+        </div>
+        <div className="progress-text">{progress.toFixed(0)}% complete</div>
+      </div>
     </div>
   );
 }
@@ -791,16 +978,44 @@ export default function StudentPage() {
             </section>
             <section className="student-panel">
               <h2>Recent Lesson Progress</h2>
-              <DataTable rows={dashboard.lesson_progress.slice(0, 8)} emptyTitle="No lesson progress yet." columns={[
-                { key: "course_name", label: "Course" },
-                { key: "lesson_name", label: "Lesson" },
-                { key: "score", label: "Score", render: (row) => row.score ?? "-" },
-                { key: "updated_at", label: "Updated", render: (row) => formatDate(row.updated_at) }
-              ]} />
+              {dashboard.lesson_progress?.length ? (
+                <div className="student-section" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))" }}>
+                  {dashboard.lesson_progress.slice(0, 8).map((lesson, index) => (
+                    <div key={`lesson-${index}`} className="student-course-card" style={{ cursor: "default" }}>
+                      <h3>{lesson.lesson_name || "Untitled Lesson"}</h3>
+                      <div className="course-meta">
+                        <span>{lesson.course_name || "Course"}</span>
+                        {lesson.score != null && <span>Score: {lesson.score}</span>}
+                      </div>
+                      <div className="course-meta" style={{ marginTop: "8px" }}>
+                        <span style={{ fontSize: "0.8rem", color: "#64748b" }}>{formatDate(lesson.updated_at)}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : <EmptyState title="No lesson progress yet." />}
             </section>
-            <section className="student-panel">
+            <section className="student-trend-card">
               <h2>Weekly Quiz Trend</h2>
-              <TrendChart rows={dashboard.weekly_quiz_trend} valueKey="best_score" valueLabel="Best quiz score" />
+              {dashboard.weekly_quiz_trend?.length ? (
+                <>
+                  <div className="trend-summary">
+                    <div className="trend-stat">
+                      <strong>{numberLabel(dashboard.weekly_quiz_trend.reduce((max, r) => Math.max(max, Number(r.best_score || 0)), 0))}</strong>
+                      <span>Best Score</span>
+                    </div>
+                    <div className="trend-stat">
+                      <strong>{numberLabel(dashboard.weekly_quiz_trend.reduce((sum, r) => sum + Number(r.best_score || 0), 0) / dashboard.weekly_quiz_trend.length)}</strong>
+                      <span>Average Score</span>
+                    </div>
+                    <div className="trend-stat">
+                      <strong>{dashboard.weekly_quiz_trend.length}</strong>
+                      <span>Weeks</span>
+                    </div>
+                  </div>
+                  <TrendChart rows={dashboard.weekly_quiz_trend} valueKey="best_score" valueLabel="Best quiz score" />
+                </>
+              ) : <EmptyState title="No quiz trend data yet." />}
             </section>
           </div>
         )}
@@ -808,12 +1023,11 @@ export default function StudentPage() {
         {!loading && dashboard && activeTab === "courses" && (
           <section className="student-panel">
             <h2>My Courses</h2>
-            <DataTable rows={dashboard.courses} emptyTitle="No enrolled courses for this term." columns={[
-              { key: "course_name", label: "Course", render: (row) => <button type="button" className="link-button" onClick={() => openCourse(row)}>{row.course_name}</button> },
-              { key: "club", label: "Club", render: (row) => row.club || "-" },
-              { key: "status", label: "Status" },
-              { key: "term_name", label: "Term" }
-            ]} />
+            {dashboard.courses?.length ? (
+              <div className="student-section" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))" }}>
+                {dashboard.courses.map((course) => <CourseCard key={course.course_id} course={course} onOpen={openCourse} />)}
+              </div>
+            ) : <EmptyState title="No enrolled courses for this term." />}
           </section>
         )}
 
@@ -838,12 +1052,11 @@ export default function StudentPage() {
         {!loading && dashboard && activeTab === "badges" && (
           <section className="student-panel">
             <h2>Badges & Leaderboards</h2>
-            <DataTable rows={dashboard.badges} emptyTitle="No badges or leaderboard entries yet." columns={[
-              { key: "leaderboard_type", label: "Type" },
-              { key: "rank", label: "Rank" },
-              { key: "score", label: "Score" },
-              { key: "created_at", label: "Date", render: (row) => formatDate(row.created_at) }
-            ]} />
+            {dashboard.badges?.length ? (
+              <div className="student-section" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))" }}>
+                {dashboard.badges.map((badge, index) => <BadgeCard key={`${badge.leaderboard_type}-${index}`} badge={badge} />)}
+              </div>
+            ) : <EmptyState title="No badges or leaderboard entries yet." />}
           </section>
         )}
 
@@ -851,17 +1064,33 @@ export default function StudentPage() {
           <div className="student-section">
             <section className="student-panel">
               <h2>Assigned Typing Tests</h2>
-              <DataTable rows={dashboard.assigned_typing_tests} emptyTitle="No typing tests assigned for this week." columns={[
-                { key: "title", label: "Test" },
-                { key: "duration_seconds", label: "Seconds" },
-                { key: "best_wpm", label: "Best WPM", render: (row) => row.best_wpm == null ? "-" : Number(row.best_wpm).toFixed(1) },
-                { key: "attempts", label: "Attempts", render: (row) => `${row.attempts_used || 0}/${row.max_attempts || 3}` },
-                { key: "action", label: "Action", render: (row) => Number(row.attempts_used || 0) < Number(row.max_attempts || 3) ? <button type="button" onClick={() => openTypingTest(row.typing_test_id)}>Start test</button> : "Attempts used" }
-              ]} />
+              {dashboard.assigned_typing_tests?.length ? (
+                <div className="student-section" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))" }}>
+                  {dashboard.assigned_typing_tests.map((test) => <TypingCard key={test.typing_test_id} test={test} onStart={openTypingTest} />)}
+                </div>
+              ) : <EmptyState title="No typing tests assigned for this week." />}
             </section>
-            <section className="student-panel">
+            <section className="student-trend-card">
               <h2>Weekly Typing Trend</h2>
-              <TrendChart rows={dashboard.weekly_typing_trend} valueKey="best_wpm" valueLabel="Best WPM" />
+              {dashboard.weekly_typing_trend?.length ? (
+                <>
+                  <div className="trend-summary">
+                    <div className="trend-stat">
+                      <strong>{numberLabel(dashboard.weekly_typing_trend.reduce((max, r) => Math.max(max, Number(r.best_wpm || 0)), 0))}</strong>
+                      <span>Best WPM</span>
+                    </div>
+                    <div className="trend-stat">
+                      <strong>{numberLabel(dashboard.weekly_typing_trend.reduce((sum, r) => sum + Number(r.best_wpm || 0), 0) / dashboard.weekly_typing_trend.length)}</strong>
+                      <span>Average WPM</span>
+                    </div>
+                    <div className="trend-stat">
+                      <strong>{dashboard.weekly_typing_trend.length}</strong>
+                      <span>Weeks</span>
+                    </div>
+                  </div>
+                  <TrendChart rows={dashboard.weekly_typing_trend} valueKey="best_wpm" valueLabel="Best WPM" />
+                </>
+              ) : <EmptyState title="No typing trend data yet." />}
             </section>
             <section className="student-panel">
               <h2>Typing Results</h2>
@@ -880,21 +1109,28 @@ export default function StudentPage() {
           <div className="student-section">
             <section className="student-panel">
               <h2>Assigned Quizzes</h2>
-              <DataTable rows={dashboard.assigned_quizzes} emptyTitle="No quizzes assigned for this term." columns={[
-                { key: "title", label: "Quiz" },
-                { key: "attempts_used", label: "Attempts", render: (row) => `${row.attempts_used}/${row.max_attempts}` },
-                { key: "best_score", label: "Best", render: (row) => row.best_score == null ? "-" : Number(row.best_score).toFixed(1) },
-                { key: "action", label: "Action", render: (row) => row.can_attempt ? <button type="button" onClick={() => openQuiz(row.quiz_id)}>Take quiz</button> : "Attempts used" }
-              ]} />
+              {dashboard.assigned_quizzes?.length ? (
+                <div className="student-section" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))" }}>
+                  {dashboard.assigned_quizzes.map((quiz) => <QuizCard key={quiz.quiz_id} quiz={quiz} onTake={openQuiz} />)}
+                </div>
+              ) : <EmptyState title="No quizzes assigned for this term." />}
             </section>
             <section className="student-panel">
               <h2>Quiz Results</h2>
-              <DataTable rows={dashboard.quiz_results} emptyTitle="No quiz attempts for this term." columns={[
-                { key: "quiz_title", label: "Quiz", render: (row) => row.quiz_title || "Untitled quiz" },
-                { key: "score", label: "Score" },
-                { key: "time_taken_seconds", label: "Time" },
-                { key: "created_at", label: "Date", render: (row) => formatDate(row.created_at) }
-              ]} />
+              {dashboard.quiz_results?.length ? (
+                <div className="student-section" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))" }}>
+                  {dashboard.quiz_results.map((quiz, index) => (
+                    <div key={`quiz-result-${index}`} className="student-quiz-card" style={{ cursor: "default" }}>
+                      <h3>{quiz.quiz_title || "Untitled Quiz"}</h3>
+                      <div className="quiz-meta">
+                        <span>{formatDate(quiz.created_at)}</span>
+                        <span>{quiz.time_taken_seconds}s</span>
+                      </div>
+                      <div className="quiz-score">{numberLabel(quiz.score)}%</div>
+                    </div>
+                  ))}
+                </div>
+              ) : <EmptyState title="No quiz attempts for this term." />}
             </section>
           </div>
         )}

@@ -261,7 +261,7 @@
 }
 
 .school-stat span {
-  color: #64748b;
+  color: #475569;
   font-weight: 600;
   font-size: 0.85rem;
 }
@@ -269,7 +269,7 @@
 .school-stat strong {
   font-size: 1.75rem;
   font-weight: 700;
-  color: #1e293b;
+  color: #0f172a;
 }
 
 .school-stat.blue { border-top: 4px solid #3b82f6; }
@@ -297,14 +297,14 @@
 
 .growth-card .eyebrow,
 .growth-card p {
-  color: #64748b;
+  color: #475569;
 }
 
 .growth-card h2 {
   margin: 0;
   font-size: 1.25rem;
   font-weight: 700;
-  color: #1e293b;
+  color: #0f172a;
 }
 
 .school-form {
@@ -660,7 +660,7 @@
 
 .helper-text {
   margin: 6px 0 0;
-  color: #64748b;
+  color: #475569;
   font-size: 0.85rem;
   line-height: 1.5;
 }

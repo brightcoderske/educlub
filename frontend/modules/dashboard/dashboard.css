@@ -202,9 +202,13 @@
 .header-copy {
   max-width: 600px;
   margin: 12px 0 0;
-  color: rgba(255, 255, 255, 0.9);
+  color: #475569;
   font-size: 1rem;
   line-height: 1.6;
+}
+
+.hero .header-copy {
+  color: rgba(255, 255, 255, 0.9);
 }
 
 .user-pill {
@@ -219,11 +223,12 @@
 .alert {
   background: #fef2f2;
   border: 1px solid #fecaca;
-  color: #991b1b;
+  color: #dc2626;
   padding: 14px 16px;
   border-radius: 12px;
   font-size: 0.9rem;
   line-height: 1.5;
+  font-weight: 500;
 }
 
 .loading-block,
@@ -250,7 +255,7 @@
 }
 
 .empty-state span {
-  color: #64748b;
+  color: #475569;
   font-size: 0.9rem;
 }
 
@@ -282,7 +287,7 @@
 }
 
 .metric-card span {
-  color: #64748b;
+  color: #475569;
   font-size: 0.9rem;
   font-weight: 500;
 }
@@ -290,11 +295,11 @@
 .metric-card strong {
   font-size: 2rem;
   font-weight: 700;
-  color: #1e293b;
+  color: #0f172a;
 }
 
 .metric-card small {
-  color: #94a3b8;
+  color: #64748b;
   font-size: 0.85rem;
 }
 
@@ -372,12 +377,12 @@
 .school-list-card strong {
   font-size: 1.1rem;
   font-weight: 600;
-  color: #1e293b;
+  color: #0f172a;
 }
 
 .school-list-card span,
 .school-list-card small {
-  color: #64748b;
+  color: #475569;
 }
 
 .school-detail-panel {
@@ -429,7 +434,7 @@
 }
 
 .admin-row span {
-  color: #64748b;
+  color: #475569;
   font-size: 0.9rem;
 }
 
@@ -466,7 +471,7 @@
 }
 
 .danger-zone span {
-  color: #991b1b;
+  color: #dc2626;
 }
 
 .danger-button {
@@ -486,7 +491,7 @@
 label {
   display: grid;
   gap: 6px;
-  color: #334155;
+  color: #0f172a;
   font-size: 0.9rem;
   font-weight: 600;
 }
@@ -594,7 +599,7 @@ button:disabled {
 
 .helper-text {
   margin: 4px 0 0;
-  color: #64748b;
+  color: #475569;
   font-size: 0.85rem;
   line-height: 1.5;
 }
@@ -645,7 +650,7 @@ button:disabled {
 .system-users-count {
   margin: -4px 0 0;
   font-size: 0.9rem;
-  color: #64748b;
+  color: #475569;
 }
 
 .system-users-filters {
@@ -739,7 +744,7 @@ td {
 }
 
 th {
-  color: #64748b;
+  color: #475569;
   font-size: 0.8rem;
   font-weight: 600;
   text-transform: uppercase;
@@ -894,13 +899,13 @@ tr:hover td {
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  color: #64748b;
+  color: #475569;
   transition: all 0.2s ease;
 }
 
 .modal-close:hover {
   background: #f1f5f9;
-  color: #1e293b;
+  color: #0f172a;
 }
 
 .modal-body {

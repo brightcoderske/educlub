@@ -14,7 +14,7 @@
   display: grid;
   gap: 6px;
   font-size: 0.9rem;
-  color: #64748b;
+  color: #475569;
   font-weight: 600;
 }
 
@@ -52,7 +52,7 @@
   display: grid;
   gap: 6px;
   font-size: 0.9rem;
-  color: #64748b;
+  color: #475569;
   font-weight: 600;
 }
 
@@ -249,7 +249,7 @@
 
 .course-builder-marks-hint {
   font-size: 0.85rem;
-  color: #64748b;
+  color: #475569;
   font-weight: 500;
 }
 
