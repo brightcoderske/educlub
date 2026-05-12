@@ -2,76 +2,6 @@ const { query, one, transaction } = require("../config/database");
 const { assertSystemAdmin } = require("./systemAdmin.service");
 const { ensureCourseBuilderSchema } = require("../utils/schemaGuard");
 
-function parseJSXForCourse(jsxContent) {
-  const modules = [];
-  
-  // Extract module data from JSX
-  const moduleRegex = /<Module\s+([^>]*?)>/g;
-  let match;
-  
-  while ((match = moduleRegex.exec(jsxContent)) !== null) {
-    const attrs = match[1];
-    const moduleData = {};
-    
-    // Extract attributes
-    const titleMatch = attrs.match(/title=["']([^"']+)["']/);
-    const descriptionMatch = attrs.match(/description=["']([^"']+)["']/);
-    const objectivesMatch = attrs.match(/objectives=["']([^"']+)["']/);
-    const iconUrlMatch = attrs.match(/iconUrl=["']([^"']+)["']/);
-    const totalMarksMatch = attrs.match(/totalMarks=["']([^"']+)["']/);
-    const badgeNameMatch = attrs.match(/badgeName=["']([^"']+)["']/);
-    const xpPointsMatch = attrs.match(/xpPoints=["']([^"']+)["']/);
-    const availableFromMatch = attrs.match(/availableFrom=["']([^"']+)["']/);
-    
-    if (titleMatch) moduleData.title = titleMatch[1];
-    if (descriptionMatch) moduleData.description = descriptionMatch[1];
-    if (objectivesMatch) moduleData.objectives = objectivesMatch[1];
-    if (iconUrlMatch) moduleData.icon_url = iconUrlMatch[1];
-    if (totalMarksMatch) moduleData.total_marks = parseFloat(totalMarksMatch[1]);
-    if (badgeNameMatch) moduleData.badge_name = badgeNameMatch[1];
-    if (xpPointsMatch) moduleData.xp_points = parseInt(xpPointsMatch[1]);
-    if (availableFromMatch) moduleData.available_from = availableFromMatch[1];
-    
-    // Extract lessons from module content
-    const moduleStart = match.index;
-    const moduleEnd = jsxContent.indexOf('</Module>', moduleStart);
-    if (moduleEnd !== -1) {
-      const moduleContent = jsxContent.substring(moduleStart, moduleEnd);
-      
-      const lessonRegex = /<Lesson\s+([^>]*?)>/g;
-      let lessonMatch;
-      moduleData.lessons = [];
-      
-      while ((lessonMatch = lessonRegex.exec(moduleContent)) !== null) {
-        const lessonAttrs = lessonMatch[1];
-        const lessonData = {};
-        
-        const lessonTitleMatch = lessonAttrs.match(/title=["']([^"']+)["']/);
-        const lessonDescriptionMatch = lessonAttrs.match(/description=["']([^"']+)["']/);
-        const lessonObjectivesMatch = lessonAttrs.match(/objectives=["']([^"']+)["']/);
-        const learningNotesMatch = lessonAttrs.match(/learningNotes=["']([^"']+)["']/);
-        const videoUrlMatch = lessonAttrs.match(/videoUrl=["']([^"']+)["']/);
-        const totalMarksMatch = lessonAttrs.match(/totalMarks=["']([^"']+)["']/);
-        const xpPointsMatch = lessonAttrs.match(/xpPoints=["']([^"']+)["']/);
-        
-        if (lessonTitleMatch) lessonData.title = lessonTitleMatch[1];
-        if (lessonDescriptionMatch) lessonData.description = lessonDescriptionMatch[1];
-        if (lessonObjectivesMatch) lessonData.lesson_objectives = lessonObjectivesMatch[1];
-        if (learningNotesMatch) lessonData.learning_notes = learningNotesMatch[1];
-        if (videoUrlMatch) lessonData.video_url = videoUrlMatch[1];
-        if (totalMarksMatch) lessonData.total_marks = parseFloat(totalMarksMatch[1]);
-        if (xpPointsMatch) lessonData.xp_points = parseInt(xpPointsMatch[1]);
-        
-        moduleData.lessons.push(lessonData);
-      }
-    }
-    
-    modules.push(moduleData);
-  }
-  
-  return modules;
-}
-
 const ACTIVITY_TYPE_SET = new Set([
   "learn_content",
   "practice",
@@ -538,89 +468,6 @@ async function reorderActivityBlocks(lessonId, orderedIds, user) {
   return { ok: true };
 }
 
-async function importFromJSX(courseId, jsxContent, user) {
-  assertSystemAdmin(user);
-  await ensure();
-  
-  const course = await one("select id from courses where id = $1 and deleted_at is null", [courseId]);
-  if (!course) {
-    const error = new Error("Course not found");
-    error.statusCode = 404;
-    throw error;
-  }
-  
-  const modulesData = parseJSXForCourse(jsxContent);
-  if (!modulesData || modulesData.length === 0) {
-    const error = new Error("No modules found in JSX file");
-    error.statusCode = 400;
-    throw error;
-  }
-  
-  const createdModules = [];
-  
-  await transaction(async (client) => {
-    for (const moduleData of modulesData) {
-      const title = moduleData.title || moduleData.name || "New module";
-      const moduleRow = await one(
-        `insert into modules (course_id, name, title, description, objectives, icon_url, total_marks, badge_name, xp_points, available_from, sort_order)
-         values ($1, $2, $2, $3, $4, $5, $6, $7, $8, $9, (select coalesce(max(sort_order), 0) + 1 from modules m2 where m2.course_id = $1))
-         returning id, course_id, coalesce(name, title) as name, sort_order`,
-        [
-          courseId,
-          title,
-          moduleData.description || null,
-          moduleData.objectives || null,
-          moduleData.icon_url || null,
-          moduleData.total_marks != null ? Number(moduleData.total_marks) : 100,
-          moduleData.badge_name || null,
-          moduleData.xp_points != null ? Number(moduleData.xp_points) : 50,
-          moduleData.available_from || null
-        ]
-      );
-      
-      const createdLessons = [];
-      
-      if (moduleData.lessons && moduleData.lessons.length > 0) {
-        for (const lessonData of moduleData.lessons) {
-          const lessonTitle = lessonData.title || lessonData.name || "New lesson";
-          const lessonRow = await one(
-            `insert into lessons (module_id, name, title, description, lesson_objectives, learning_notes, video_url, total_marks, sort_order)
-             values ($1, $2, $2, $3, $4, $5, $6, $7, (select coalesce(max(sort_order), 0) + 1 from lessons l2 where l2.module_id = $1))
-             returning id, module_id, coalesce(name, title) as name, sort_order`,
-            [
-              moduleRow.id,
-              lessonTitle,
-              lessonData.description || null,
-              lessonData.lesson_objectives || null,
-              lessonData.learning_notes || null,
-              lessonData.video_url || null,
-              lessonData.total_marks != null ? Number(lessonData.total_marks) : 100
-            ]
-          );
-          createdLessons.push({
-            id: lessonRow.id,
-            title: lessonRow.name,
-            sort_order: lessonRow.sort_order
-          });
-        }
-      }
-      
-      createdModules.push({
-        id: moduleRow.id,
-        title: moduleRow.name,
-        sort_order: moduleRow.sort_order,
-        lessons: createdLessons
-      });
-    }
-  });
-  
-  return {
-    success: true,
-    message: `Successfully imported ${createdModules.length} modules`,
-    modules: createdModules
-  };
-}
-
 module.exports = {
   getBlueprint,
   patchCourse,
@@ -636,6 +483,5 @@ module.exports = {
   updateActivityBlock,
   deleteActivityBlock,
   reorderActivityBlocks,
-  importFromJSX,
   ACTIVITY_TYPES: Array.from(ACTIVITY_TYPE_SET)
 };

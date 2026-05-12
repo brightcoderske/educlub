@@ -43,25 +43,29 @@ const tabs = [
 function EmptyState({ title, detail }) {
   return (
     <div className="empty-state">
+      <div style={{ fontSize: '3rem', marginBottom: '16px', color: '#94a3b8' }}>
+        <Activity size={48} />
+      </div>
       <p>{title}</p>
       <span>{detail}</span>
     </div>
   );
 }
 
-function MetricCard({ label, value, detail }) {
+function MetricCard({ label, value, detail, icon: Icon }) {
   return (
     <article className="metric-card">
       <span>{label}</span>
       <strong>{value ?? "0"}</strong>
-      <small>{detail}</small>
+      {detail && <small>{detail}</small>}
+      {Icon && <Icon size={16} style={{ color: '#94a3b8', marginTop: '4px' }} />}
     </article>
   );
 }
 
-function DataTable({ columns, rows, emptyTitle, wrapClassName }) {
+function DataTable({ columns, rows, emptyTitle, emptyDetail, wrapClassName }) {
   if (!rows?.length) {
-    return <EmptyState title={emptyTitle} detail="No records exist yet. When real data is created, it will appear here." />;
+    return <EmptyState title={emptyTitle} detail={emptyDetail || "No records available yet."} />;
   }
   const rowKey = (row, index) => {
     return row.id || row.school_id || row.user_id || row.learner_id || row.course_id || row.quiz_id || row.created_at || `${row.leaderboard_type || "row"}-${row.rank || index}-${index}`;
