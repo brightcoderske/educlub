@@ -17,7 +17,7 @@ import {
   verticalListSortingStrategy
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { GripVertical, Plus, Trash2, ChevronDown, ChevronRight } from "lucide-react";
+import { GripVertical, Plus, Trash2, ChevronDown, ChevronRight, Image as ImageIcon, Video, Code, FileText, Type, LayoutTemplate } from "lucide-react";
 import { api } from "../../lib/api";
 import "./course-builder.css";
 
@@ -41,6 +41,15 @@ const ACTIVITY_LABELS = {
   quiz: "Quiz (auto-mark)",
   submission: "Submission task"
 };
+
+const CONTENT_BLOCK_TYPES = [
+  { type: "text", label: "Text Content", icon: Type, description: "Add text content" },
+  { type: "image", label: "Image", icon: ImageIcon, description: "Add an image" },
+  { type: "video", label: "Video", icon: Video, description: "Add a video" },
+  { type: "code", label: "Code Block", icon: Code, description: "Add code with syntax highlighting" },
+  { type: "scratch", label: "Scratch Blocks", icon: LayoutTemplate, description: "Add Scratch block examples" },
+  { type: "file", label: "File/Resource", icon: FileText, description: "Add downloadable resources" }
+];
 
 function sumLessonMarks(lesson) {
   const blocks = lesson?.activity_blocks || [];
@@ -349,7 +358,13 @@ export default function CourseBuilderPanel({ courses, onPublished }) {
                 <Plus size={16} /> Add module
               </button>
             </div>
-            <p className="eyebrow" style={{ marginTop: 6 }}>
+            <div style={{ marginTop: 16, padding: 16, background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 12 }}>
+              <p style={{ margin: 0, color: "#1e40af", fontWeight: 500, fontSize: "0.95rem" }}>
+                <strong>Quick Start Guide:</strong> 
+                Add modules to organize your course. Add lessons within each module. Add activities (learn, practice, quiz, etc.) to lessons. Drag the grip handles to reorder items. Set activity marks to total 100 per lesson.
+              </p>
+            </div>
+            <p className="eyebrow" style={{ marginTop: 12 }}>
               Drag modules, lessons, and activity blocks to reorder. Each lesson&apos;s activity marks should total 100 when you are ready to go live.
             </p>
 
@@ -476,14 +491,348 @@ export default function CourseBuilderPanel({ courses, onPublished }) {
   );
 }
 
+function ContentBlockEditor({ block, onSave }) {
+  const [contentBlocks, setContentBlocks] = useState(block.payload?.contentBlocks || []);
+
+  const addContentBlock = (type) => {
+    const newBlock = {
+      id: `block-${Date.now()}`,
+      type,
+      content: ""
+    };
+    setContentBlocks(prev => [...prev, newBlock]);
+  };
+
+  const updateContentBlock = (blockId, content) => {
+    setContentBlocks(prev => prev.map(b => b.id === blockId ? { ...b, content } : b));
+  };
+
+  const deleteContentBlock = (blockId) => {
+    setContentBlocks(prev => prev.filter(b => b.id !== blockId));
+  };
+
+  const handleSave = () => {
+    onSave({ ...block, payload: { ...block.payload, contentBlocks } });
+  };
+
+  const renderContentBlock = (contentBlock) => {
+    switch (contentBlock.type) {
+      case 'text':
+        return (
+          <div className="content-block-editor">
+            <label>Text Content</label>
+            <textarea
+              value={contentBlock.content}
+              onChange={(e) => updateContentBlock(contentBlock.id, e.target.value)}
+              placeholder="Enter text content..."
+              rows={3}
+            />
+          </div>
+        );
+      case 'image':
+        return (
+          <div className="content-block-editor">
+            <label>Image URL</label>
+            <input
+              type="text"
+              value={contentBlock.content}
+              onChange={(e) => updateContentBlock(contentBlock.id, e.target.value)}
+              placeholder="https://example.com/image.jpg"
+            />
+            <label style={{ marginTop: 8 }}>Alt Text</label>
+            <input
+              type="text"
+              value={contentBlock.alt || ''}
+              onChange={(e) => updateContentBlock(contentBlock.id, { ...contentBlock, alt: e.target.value })}
+              placeholder="Image description..."
+            />
+          </div>
+        );
+      case 'video':
+        return (
+          <div className="content-block-editor">
+            <label>Video URL (YouTube, Vimeo, or direct link)</label>
+            <input
+              type="text"
+              value={contentBlock.content}
+              onChange={(e) => updateContentBlock(contentBlock.id, e.target.value)}
+              placeholder="https://youtube.com/watch?v=..."
+            />
+          </div>
+        );
+      case 'code':
+        return (
+          <div className="content-block-editor">
+            <label>Language</label>
+            <select
+              value={contentBlock.language || 'python'}
+              onChange={(e) => updateContentBlock(contentBlock.id, { ...contentBlock, language: e.target.value })}
+            >
+              <option value="python">Python</option>
+              <option value="javascript">JavaScript</option>
+              <option value="html">HTML</option>
+              <option value="css">CSS</option>
+              <option value="scratch">Scratch</option>
+            </select>
+            <label style={{ marginTop: 8 }}>Code</label>
+            <textarea
+              value={contentBlock.content}
+              onChange={(e) => updateContentBlock(contentBlock.id, e.target.value)}
+              placeholder="Enter code..."
+              rows={4}
+              style={{ fontFamily: 'ui-monospace, monospace' }}
+            />
+          </div>
+        );
+      case 'scratch':
+        return (
+          <div className="content-block-editor">
+            <label>Scratch Block Description</label>
+            <textarea
+              value={contentBlock.content}
+              onChange={(e) => updateContentBlock(contentBlock.id, e.target.value)}
+              placeholder="Describe the Scratch blocks students should use..."
+              rows={3}
+            />
+            <label style={{ marginTop: 8 }}>Block Image URL (optional)</label>
+            <input
+              type="text"
+              value={contentBlock.blockImage || ''}
+              onChange={(e) => updateContentBlock(contentBlock.id, { ...contentBlock, blockImage: e.target.value })}
+              placeholder="https://example.com/scratch-block.png"
+            />
+          </div>
+        );
+      case 'file':
+        return (
+          <div className="content-block-editor">
+            <label>File URL</label>
+            <input
+              type="text"
+              value={contentBlock.content}
+              onChange={(e) => updateContentBlock(contentBlock.id, e.target.value)}
+              placeholder="https://example.com/resource.pdf"
+            />
+            <label style={{ marginTop: 8 }}>File Name</label>
+            <input
+              type="text"
+              value={contentBlock.fileName || ''}
+              onChange={(e) => updateContentBlock(contentBlock.id, { ...contentBlock, fileName: e.target.value })}
+              placeholder="Resource name..."
+            />
+          </div>
+        );
+      default:
+        return null;
+    }
+  };
+
+  return (
+    <div className="content-blocks-editor">
+      <div className="content-blocks-toolbar">
+        <span style={{ fontWeight: 600, color: "#475569" }}>Add Content:</span>
+        {CONTENT_BLOCK_TYPES.map(blockType => {
+          const Icon = blockType.icon;
+          return (
+            <button
+              key={blockType.type}
+              type="button"
+              onClick={() => addContentBlock(blockType.type)}
+              className="content-block-type-btn"
+              title={blockType.description}
+            >
+              <Icon size={16} />
+              <span>{blockType.label}</span>
+            </button>
+          );
+        })}
+      </div>
+      <div className="content-blocks-list">
+        {contentBlocks.map((contentBlock, index) => {
+          const BlockIcon = CONTENT_BLOCK_TYPES.find(t => t.type === contentBlock.type)?.icon || Type;
+          return (
+            <div key={contentBlock.id} className="content-block-item">
+              <div className="content-block-header">
+                <span className="content-block-type">
+                  <BlockIcon size={14} />
+                  {CONTENT_BLOCK_TYPES.find(t => t.type === contentBlock.type)?.label || contentBlock.type}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => deleteContentBlock(contentBlock.id)}
+                  className="content-block-delete"
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
+              {renderContentBlock(contentBlock)}
+            </div>
+          );
+        })}
+        {contentBlocks.length === 0 && (
+          <div className="content-blocks-empty">
+            <p>No content blocks added yet. Click a button above to add content.</p>
+          </div>
+        )}
+      </div>
+      <button type="button" onClick={handleSave} className="content-blocks-save">
+        Save Content Blocks
+      </button>
+    </div>
+  );
+}
+
 function BlockEditor({ block, activityTypes, onSave, onDelete }) {
   const [marks, setMarks] = useState(String(block.marks_weight ?? 0));
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [payloadText, setPayloadText] = useState(JSON.stringify(block.payload || {}, null, 2));
+  const [formData, setFormData] = useState(block.payload || {});
 
   useEffect(() => {
     setMarks(String(block.marks_weight ?? 0));
     setPayloadText(JSON.stringify(block.payload || {}, null, 2));
+    setFormData(block.payload || {});
   }, [block.id, block.marks_weight, block.payload]);
+
+  const handleFormChange = (field, value) => {
+    setFormData(prev => ({ ...prev, [field]: value }));
+  };
+
+  const handleSave = () => {
+    onSave({ ...block, marks_weight: Number(marks) }, JSON.stringify(formData, null, 2));
+  };
+
+  const renderFormFields = () => {
+    switch (block.activity_type) {
+      case 'learn_content':
+        return (
+          <div className="course-builder-form">
+            <ContentBlockEditor block={block} onSave={onSave} />
+            <label style={{ marginTop: 12 }}>
+              Teacher Notes (optional)
+              <textarea
+                value={formData.teacherNotes || ''}
+                onChange={(e) => handleFormChange('teacherNotes', e.target.value)}
+                placeholder="Optional notes for teachers..."
+                rows={2}
+              />
+            </label>
+          </div>
+        );
+      case 'practice':
+        return (
+          <div className="course-builder-form">
+            <label>
+              Starter Code
+              <textarea
+                value={formData.starterCode || ''}
+                onChange={(e) => handleFormChange('starterCode', e.target.value)}
+                placeholder="Code for students to start with..."
+                rows={4}
+              />
+            </label>
+            <label>
+              Example Solution
+              <textarea
+                value={formData.example || ''}
+                onChange={(e) => handleFormChange('example', e.target.value)}
+                placeholder="Solution example..."
+                rows={3}
+              />
+            </label>
+          </div>
+        );
+      case 'creative_corner':
+        return (
+          <div className="course-builder-form">
+            <ContentBlockEditor block={block} onSave={onSave} />
+          </div>
+        );
+      case 'teacher_task':
+        return (
+          <div className="course-builder-form">
+            <label>
+              Instructions
+              <textarea
+                value={formData.instructions || ''}
+                onChange={(e) => handleFormChange('instructions', e.target.value)}
+                placeholder="Task instructions..."
+                rows={4}
+              />
+            </label>
+            <label>
+              Submission Type
+              <select
+                value={formData.submissionType || 'code'}
+                onChange={(e) => handleFormChange('submissionType', e.target.value)}
+              >
+                <option value="code">Code</option>
+                <option value="text">Text</option>
+                <option value="file">File</option>
+              </select>
+            </label>
+          </div>
+        );
+      case 'quiz':
+        return (
+          <div className="course-builder-form">
+            <label>
+              Quiz Questions (JSON format for multiple questions)
+              <textarea
+                value={formData.questions ? JSON.stringify(formData.questions, null, 2) : ''}
+                onChange={(e) => {
+                  try {
+                    const parsed = JSON.parse(e.target.value);
+                    handleFormChange('questions', parsed);
+                  } catch {
+                    handleFormChange('questions', e.target.value);
+                  }
+                }}
+                placeholder='[{"question": "Question?", "option_a": "A", "option_b": "B", "option_c": "C", "option_d": "D", "correct": "A"}]'
+                rows={4}
+              />
+            </label>
+          </div>
+        );
+      case 'submission':
+        return (
+          <div className="course-builder-form">
+            <label>
+              Instructions
+              <textarea
+                value={formData.instructions || ''}
+                onChange={(e) => handleFormChange('instructions', e.target.value)}
+                placeholder="What should students submit?"
+                rows={4}
+              />
+            </label>
+            <label>
+              Deadline (optional)
+              <input
+                type="text"
+                value={formData.deadline || ''}
+                onChange={(e) => handleFormChange('deadline', e.target.value)}
+                placeholder="Optional deadline..."
+              />
+            </label>
+          </div>
+        );
+      default:
+        return (
+          <div className="course-builder-form">
+            <label>
+              JSON Payload
+              <textarea
+                className="course-builder-json"
+                value={payloadText}
+                onChange={(e) => setPayloadText(e.target.value)}
+                spellCheck={false}
+              />
+            </label>
+          </div>
+        );
+    }
+  };
 
   return (
     <SortableRow id={block.id} className="course-builder-block">
@@ -498,14 +847,33 @@ function BlockEditor({ block, activityTypes, onSave, onDelete }) {
               Marks
               <input type="number" min={0} max={100} step={0.5} value={marks} onChange={(e) => setMarks(e.target.value)} />
             </label>
-            <button type="button" onClick={() => onSave({ ...block, marks_weight: Number(marks) }, payloadText)}>
+            <button type="button" onClick={handleSave}>
               Save block
             </button>
             <button type="button" className="danger" onClick={() => onDelete(block.id)}>
               <Trash2 size={14} />
             </button>
           </div>
-          <textarea className="course-builder-json" value={payloadText} onChange={(e) => setPayloadText(e.target.value)} spellCheck={false} />
+          {renderFormFields()}
+          <div className="course-builder-advanced-toggle">
+            <button type="button" onClick={() => setShowAdvanced(!showAdvanced)} style={{ background: "none", border: "none", color: "#64748b", cursor: "pointer", fontSize: "0.85rem", textDecoration: "underline" }}>
+              {showAdvanced ? "Hide advanced JSON editor" : "Show advanced JSON editor"}
+            </button>
+          </div>
+          {showAdvanced && (
+            <textarea
+              className="course-builder-json"
+              value={JSON.stringify(formData, null, 2)}
+              onChange={(e) => {
+                setPayloadText(e.target.value);
+                try {
+                  const parsed = JSON.parse(e.target.value);
+                  setFormData(parsed);
+                } catch {}
+              }}
+              spellCheck={false}
+            />
+          )}
         </>
       )}
     </SortableRow>

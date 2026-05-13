@@ -1,6 +1,59 @@
 .course-builder {
   display: grid;
   gap: 24px;
+  padding: 24px;
+  background: #f8fafc;
+  border-radius: 16px;
+}
+
+/* Drag and drop visual feedback */
+.course-builder-module.dragging {
+  opacity: 0.5;
+  transform: scale(0.98);
+}
+
+.course-builder-lesson.dragging {
+  opacity: 0.5;
+  transform: scale(0.98);
+}
+
+.course-builder-block.dragging {
+  opacity: 0.5;
+  transform: scale(0.98);
+}
+
+/* Drag handle styling */
+/* Drag handle styling */
+.course-builder-drag-handle {
+  cursor: grab;
+  color: #64748b;
+  display: flex;
+  align-items: center;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #f8fafc, #f1f5f9);
+  border: 2px dashed #cbd5e1;
+  transition: all 0.2s ease;
+  touch-action: none;
+  font-weight: 600;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.course-builder-drag-handle:hover {
+  color: #3b82f6;
+  background: linear-gradient(135deg, #dbeafe, #bfdbfe);
+  border-color: #3b82f6;
+  transform: scale(1.05);
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.2);
+}
+
+.course-builder-drag-handle:active {
+  cursor: grabbing;
+  background: #3b82f6;
+  color: #fff;
+  border-color: #2563eb;
 }
 
 .course-builder-toolbar {
@@ -280,6 +333,250 @@
   outline: none;
   border-color: #3b82f6;
   box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+.course-builder-json::placeholder {
+  color: #94a3b8;
+}
+
+/* Add helper text for JSON editor */
+.course-builder-json-hint {
+  margin-top: 8px;
+  font-size: 0.8rem;
+  color: #64748b;
+  background: #fef3c7;
+  border: 1px solid #fcd34d;
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.course-builder-json-hint code {
+  background: #fff;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  color: #92400e;
+}
+
+/* Course Builder Form Styling */
+.course-builder-form {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 16px;
+  background: #fff;
+  border-radius: 12px;
+  border: 1px solid #e2e8f0;
+}
+
+.course-builder-form label {
+  display: grid;
+  gap: 6px;
+  font-size: 0.9rem;
+  color: #475569;
+  font-weight: 600;
+}
+
+.course-builder-form textarea,
+.course-builder-form input,
+.course-builder-form select {
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid #cbd5e1;
+  font: inherit;
+  font-size: 0.95rem;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  font-family: inherit;
+  resize: vertical;
+}
+
+.course-builder-form textarea:focus,
+.course-builder-form input:focus,
+.course-builder-form select:focus {
+  outline: none;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+.course-builder-form textarea::placeholder {
+  color: #94a3b8;
+}
+
+.course-builder-advanced-toggle {
+  margin-top: 12px;
+  padding: 8px 0;
+  border-top: 1px solid #e2e8f0;
+}
+
+/* Content Blocks Editor Styling */
+.content-blocks-editor {
+  margin-top: 12px;
+  padding: 16px;
+  background: #fff;
+  border-radius: 12px;
+  border: 1px solid #e2e8f0;
+}
+
+.content-blocks-toolbar {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #e2e8f0;
+  margin-bottom: 12px;
+  align-items: center;
+}
+
+.content-block-type-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #475569;
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.content-block-type-btn:hover {
+  background: #e2e8f0;
+  border-color: #94a3b8;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+}
+
+.content-block-type-btn span {
+  display: none;
+}
+
+@media (min-width: 1200px) {
+  .content-block-type-btn span {
+    display: inline;
+  }
+}
+
+.content-blocks-list {
+  display: grid;
+  gap: 12px;
+  min-height: 80px;
+}
+
+.content-block-item {
+  padding: 16px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  transition: all 0.2s ease;
+}
+
+.content-block-item:hover {
+  border-color: #cbd5e1;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+}
+
+.content-block-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.content-block-type {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #3b82f6;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.content-block-delete {
+  padding: 6px;
+  border: none;
+  background: #fee2e2;
+  color: #dc2626;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.content-block-delete:hover {
+  background: #fecaca;
+  transform: scale(1.05);
+}
+
+.content-block-editor {
+  display: grid;
+  gap: 8px;
+}
+
+.content-block-editor label {
+  display: grid;
+  gap: 4px;
+  font-size: 0.85rem;
+  color: #64748b;
+  font-weight: 500;
+}
+
+.content-block-editor textarea,
+.content-block-editor input,
+.content-block-editor select {
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid #cbd5e1;
+  font: inherit;
+  font-size: 0.9rem;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  font-family: inherit;
+  resize: vertical;
+}
+
+.content-block-editor textarea:focus,
+.content-block-editor input:focus,
+.content-block-editor select:focus {
+  outline: none;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+.content-blocks-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  background: #f8fafc;
+  border: 2px dashed #cbd5e1;
+  border-radius: 10px;
+  color: #94a3b8;
+  font-size: 0.9rem;
+  text-align: center;
+}
+
+.content-blocks-save {
+  margin-top: 12px;
+  padding: 10px 20px;
+  border: none;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #10b981, #059669);
+  color: #fff;
+  font-weight: 600;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 8px rgba(16, 185, 129, 0.2);
+}
+
+.content-blocks-save:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
 }
 
 .course-builder-mini-actions {

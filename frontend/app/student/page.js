@@ -1,20 +1,29 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
+import { useCallback, useEffect, useMemo, useState, useRef } from "react";
+import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from "@dnd-kit/core";
+import { SortableContext, arrayMove, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import { 
   Award,
   BarChart3,
   BookOpen,
   CheckCircle2,
   FileText,
   Gauge,
+  GripVertical,
   LayoutDashboard,
   LogOut,
   Medal,
   PanelLeftClose,
   PanelLeftOpen,
+  Plus,
+  Sparkles,
+  Star,
   Target,
-  Trophy
+  Trash2,
+  Trophy,
+  Confetti
 } from "lucide-react";
 import { api, assetUrl } from "../../lib/api";
 import { currentUser, logout } from "../../lib/auth";
@@ -22,11 +31,89 @@ import "./student-dashboard.css";
 
 const SIDEBAR_HIDE_DELAY_MS = 420;
 
+// Sound effects for kid-friendly interactions
+const playSuccessSound = () => {
+  const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+  const oscillator = audioContext.createOscillator();
+  const gainNode = audioContext.createGain();
+  
+  oscillator.connect(gainNode);
+  gainNode.connect(audioContext.destination);
+  
+  oscillator.frequency.setValueAtTime(523.25, audioContext.currentTime); // C5
+  oscillator.frequency.setValueAtTime(659.25, audioContext.currentTime + 0.1); // E5
+  oscillator.frequency.setValueAtTime(783.99, audioContext.currentTime + 0.2); // G5
+  
+  gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+  gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.5);
+  
+  oscillator.start(audioContext.currentTime);
+  oscillator.stop(audioContext.currentTime + 0.5);
+};
+
+const playCelebrationSound = () => {
+  const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+  const notes = [523.25, 659.25, 783.99, 1046.50]; // C5, E5, G5, C6
+  
+  notes.forEach((freq, i) => {
+    setTimeout(() => {
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+      
+      oscillator.frequency.setValueAtTime(freq, audioContext.currentTime);
+      gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+      
+      oscillator.start(audioContext.currentTime);
+      oscillator.stop(audioContext.currentTime + 0.3);
+    }, i * 100);
+  });
+};
+
+function Celebration({ show, onClose }) {
+  if (!show) return null;
+  
+  useEffect(() => {
+    playCelebrationSound();
+    const timer = setTimeout(onClose, 3000);
+    return () => clearTimeout(timer);
+  }, [show, onClose]);
+  
+  return (
+    <div className="celebration-overlay">
+      <div className="celebration-content">
+        <div className="celebration-icon">
+          <Trophy size={64} />
+        </div>
+        <h2>🎉 Great Job! 🎉</h2>
+        <p>You completed this module!</p>
+        <div className="celebration-stars">
+          {[...Array(5)].map((_, i) => (
+            <Star key={i} size={32} className="star-animation" style={{ animationDelay: `${i * 0.1}s` }} />
+          ))}
+        </div>
+        <div className="celebration-confetti">
+          {[...Array(20)].map((_, i) => (
+            <div key={i} className="confetti-piece" style={{ 
+              left: `${Math.random() * 100}%`,
+              animationDelay: `${Math.random() * 2}s`,
+              animationDuration: `${2 + Math.random() * 2}s`
+            }} />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const tabs = [
   { id: "overview", label: "Overview", icon: LayoutDashboard },
   { id: "courses", label: "Courses", icon: BookOpen },
   { id: "reports", label: "Reports", icon: FileText },
-  { id: "badges", label: "Badges", icon: Award },
+  { id: "badges", label: "Badges & Leaderboards", icon: Award },
   { id: "typing", label: "Typing", icon: Gauge },
   { id: "quizzes", label: "Quizzes", icon: Target }
 ];
@@ -375,7 +462,10 @@ function BadgeCard({ badge }) {
 }
 
 function CourseCard({ course, onOpen }) {
-  const progress = course.progress || 0;
+  // Try multiple possible field names for progress
+  const progress = course.progress || course.completion_percent || course.percent_complete || course.lessons_completed_percent || 0;
+  const hasProgress = progress > 0 || progress !== 0;
+  
   return (
     <div className="student-course-card" onClick={() => onOpen(course)}>
       <h3>{course.course_name || "Untitled Course"}</h3>
@@ -384,12 +474,14 @@ function CourseCard({ course, onOpen }) {
         <span>{course.status || "Active"}</span>
         <span>{course.term_name || "Current term"}</span>
       </div>
-      <div className="course-progress">
-        <div className="progress-bar">
-          <div className="progress-fill" style={{ width: `${Math.min(progress, 100)}%` }} />
+      {hasProgress && (
+        <div className="course-progress">
+          <div className="progress-bar">
+            <div className="progress-fill" style={{ width: `${Math.min(progress, 100)}%` }} />
+          </div>
+          <div className="progress-text">{progress.toFixed(0)}% complete</div>
         </div>
-        <div className="progress-text">{progress.toFixed(0)}% complete</div>
-      </div>
+      )}
     </div>
   );
 }
@@ -584,8 +676,24 @@ function LessonPlayerWorkspace({ course, selectedLesson, lessonDraft, setLessonD
     }
   }
 
+  const [showCelebration, setShowCelebration] = useState(false);
+
+  const handleSaveLesson = async (submit) => {
+    const result = await onSaveLesson(submit);
+    if (result && submit) {
+      playSuccessSound();
+      // Check if all steps are completed
+      const allStepsCompleted = steps.every((s, i) => i < safeIndex);
+      if (allStepsCompleted && steps.length > 0) {
+        setShowCelebration(true);
+      }
+    }
+    return result;
+  };
+
   return (
     <div className="quiz-take-backdrop">
+      <Celebration show={showCelebration} onClose={() => setShowCelebration(false)} />
       <section className="course-workspace" role="dialog" aria-modal="true" aria-label={course.name}>
         <div className="quiz-take-header">
           <div>
@@ -659,10 +767,10 @@ function LessonPlayerWorkspace({ course, selectedLesson, lessonDraft, setLessonD
                 <button type="button" className="student-secondary" disabled={safeIndex >= steps.length - 1} onClick={() => setStepIndex((i) => Math.min(steps.length - 1, i + 1))}>
                   Next step
                 </button>
-                <button type="button" onClick={() => onSaveLesson(false)}>
+                <button type="button" onClick={() => handleSaveLesson(false)}>
                   Save progress
                 </button>
-                <button type="button" onClick={() => onSaveLesson(true)}>
+                <button type="button" onClick={() => handleSaveLesson(true)}>
                   Submit quiz
                 </button>
               </div>
