@@ -6,6 +6,14 @@ const { requireRoles } = require("../middleware/role.middleware");
 const { memoryUpload } = require("../middleware/upload.middleware");
 
 const router = express.Router();
+
+// Public/course content routes (accessible by students and school admins)
+router.get("/:id/view", authenticate, courseBuilder.viewCourse);
+router.get("/:id/progress/:userId", authenticate, courseBuilder.getCourseProgress);
+router.post("/:id/lessons/:lessonId/complete", authenticate, courseBuilder.markLessonComplete);
+router.post("/activity-blocks/:blockId/submit", authenticate, courseBuilder.submitActivityBlock);
+
+// System admin only routes (for editing)
 router.use(authenticate, requireRoles("system_admin"));
 
 router.get("/", controller.listCourses);

@@ -142,6 +142,20 @@ async function ensureCourseBuilderSchema(db) {
 
   await db.query("alter table courses add column if not exists technology text");
 
+  await db.query("alter table courses add column if not exists about text");
+
+  await db.query("alter table courses add column if not exists learnings jsonb default '[]'::jsonb");
+
+  await db.query("alter table courses add column if not exists thumbnail_type varchar(20) default 'image'");
+
+  await db.query("alter table courses add column if not exists meta_title varchar(200)");
+
+  await db.query("alter table courses add column if not exists meta_description text");
+
+  await db.query("alter table courses add column if not exists meta_keywords text");
+
+  await db.query("alter table courses add column if not exists public boolean default false");
+
   await db.query("alter table modules add column if not exists icon_url text");
 
   await db.query("alter table modules add column if not exists total_marks numeric(6,2) not null default 100");

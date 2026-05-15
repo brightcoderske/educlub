@@ -13,6 +13,14 @@ function wrap(handler) {
 
 const getBlueprint = wrap(async (req, res) => res.json(await courseBuilder.getBlueprint(req.params.id, req.user)));
 
+const viewCourse = wrap(async (req, res) => res.json(await courseBuilder.viewCourse(req.params.id, req.user)));
+
+const getCourseProgress = wrap(async (req, res) => res.json(await courseBuilder.getCourseProgress(req.params.id, req.params.userId, req.user)));
+
+const markLessonComplete = wrap(async (req, res) => res.json(await courseBuilder.markLessonComplete(req.params.id, req.params.lessonId, req.body.userId, req.user)));
+
+const submitActivityBlock = wrap(async (req, res) => res.json(await courseBuilder.submitActivityBlock(req.params.blockId, req.body, req.user)));
+
 const patchCourse = wrap(async (req, res) => res.json(await courseBuilder.patchCourse(req.params.id, req.body, req.user)));
 
 const createModule = wrap(async (req, res) =>
@@ -59,6 +67,10 @@ const activityTypes = wrap(async (req, res) => res.json({ types: courseBuilder.A
 
 module.exports = {
   getBlueprint,
+  viewCourse,
+  getCourseProgress,
+  markLessonComplete,
+  submitActivityBlock,
   patchCourse,
   createModule,
   updateModule,

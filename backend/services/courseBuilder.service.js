@@ -47,8 +47,18 @@ async function getBlueprint(courseId, user) {
   assertSystemAdmin(user);
   await ensure();
   const course = await one(
-    `select id, coalesce(name, title) as name, title, description, short_description, objectives, club, status,
-            is_published, is_coming_soon, published_at, cover_image_url, target_level, technology, created_at, updated_at
+    `select id, coalesce(name, title) as name, title, description, short_description, objectives, 
+            COALESCE(about, '') as about, 
+            COALESCE(learnings, '[]'::jsonb) as learnings, 
+            club, status,
+            is_published, is_coming_soon, published_at, cover_image_url, 
+            COALESCE(thumbnail_type, 'image') as thumbnail_type, 
+            target_level, technology,
+            COALESCE(meta_title, '') as meta_title, 
+            COALESCE(meta_description, '') as meta_description, 
+            COALESCE(meta_keywords, '') as meta_keywords, 
+            COALESCE(public, false) as public, 
+            created_at, updated_at
      from courses where id = $1 and deleted_at is null`,
     [courseId]
   );
@@ -123,11 +133,17 @@ async function patchCourse(courseId, payload, user) {
        description = coalesce($4, description),
        short_description = coalesce($5, short_description),
        objectives = coalesce($6, objectives),
-       club = coalesce($7, club),
-       cover_image_url = coalesce($8, cover_image_url),
-       target_level = coalesce($9, target_level),
-       technology = coalesce($10, technology),
-       status = coalesce($11, status),
+       about = coalesce($7, about),
+       learnings = case when $8::jsonb is null then learnings else $8::jsonb end,
+       club = coalesce($9, club),
+       cover_image_url = coalesce($10, cover_image_url),
+       thumbnail_type = coalesce($11, thumbnail_type),
+       target_level = coalesce($12, target_level),
+       technology = coalesce($13, technology),
+       status = coalesce($14, status),
+       meta_title = coalesce($15, meta_title),
+       meta_description = coalesce($16, meta_description),
+       meta_keywords = coalesce($17, meta_keywords),
        updated_at = now()
      where id = $1`,
     [
@@ -137,11 +153,17 @@ async function patchCourse(courseId, payload, user) {
       payload.description ?? null,
       payload.short_description ?? null,
       payload.objectives ?? null,
+      payload.about ?? null,
+      payload.learnings != null ? JSON.stringify(payload.learnings) : null,
       payload.club ?? null,
       payload.cover_image_url ?? null,
+      payload.thumbnail_type ?? null,
       payload.target_level ?? null,
       payload.technology ?? null,
-      payload.status ?? null
+      payload.status ?? null,
+      payload.meta_title ?? null,
+      payload.meta_description ?? null,
+      payload.meta_keywords ?? null
     ]
   );
   return getBlueprint(courseId, user);
@@ -468,8 +490,247 @@ async function reorderActivityBlocks(lessonId, orderedIds, user) {
   return { ok: true };
 }
 
+async function viewCourse(courseId, user) {
+  await ensure();
+  
+  // Check permissions: school admin or enrolled student
+  const isSchoolAdmin = user.role === "school_admin" || user.role === "system_admin";
+  if (!isSchoolAdmin) {
+    const enrollment = await one(
+      `select 1 from course_enrolments ce 
+       join courses c on c.id = ce.course_id 
+       where ce.course_id = $1 and ce.user_id = $2 and ce.deleted_at is null and c.deleted_at is null`,
+      [courseId, user.id]
+    );
+    if (!enrollment) {
+      const error = new Error("Not enrolled in this course");
+      error.statusCode = 403;
+      throw error;
+    }
+  }
+
+  const course = await one(
+    `select id, coalesce(name, title) as name, title, description, short_description, objectives, 
+            COALESCE(about, '') as about, 
+            COALESCE(learnings, '[]'::jsonb) as learnings, 
+            club, status,
+            is_published, is_coming_soon, published_at, cover_image_url, 
+            COALESCE(thumbnail_type, 'image') as thumbnail_type, 
+            target_level, technology,
+            COALESCE(meta_title, '') as meta_title, 
+            COALESCE(meta_description, '') as meta_description, 
+            COALESCE(meta_keywords, '') as meta_keywords, 
+            COALESCE(public, false) as public, 
+            created_at, updated_at
+     from courses where id = $1 and deleted_at is null`,
+    [courseId]
+  );
+  if (!course) {
+    const error = new Error("Course not found");
+    error.statusCode = 404;
+    throw error;
+  }
+  const modules = await query(
+    `select id, course_id, coalesce(name, title) as name, coalesce(title, name) as title, description, objectives,
+            sort_order, icon_url, total_marks, badge_name, xp_points, available_from
+     from modules where course_id = $1 order by sort_order, created_at`,
+    [courseId]
+  );
+  const moduleIds = modules.rows.map((m) => m.id);
+  let lessons = { rows: [] };
+  if (moduleIds.length) {
+    lessons = await query(
+      `select l.id, l.module_id, coalesce(l.name, l.title) as name, coalesce(l.title, l.name) as title,
+              l.description, l.lesson_objectives, l.learning_notes, l.sort_order, l.total_marks, l.video_url,
+              l.practice_prompt, l.starter_code, l.homework_prompt, l.creativity_prompt, l.quiz, l.content
+       from lessons l where l.module_id = any($1::uuid[]) order by l.module_id, l.sort_order, l.created_at`,
+      [moduleIds]
+    );
+  }
+  const lessonIds = lessons.rows.map((l) => l.id);
+  let blocks = { rows: [] };
+  if (lessonIds.length) {
+    blocks = await query(
+      `select id, lesson_id, activity_type, sort_order, marks_weight, payload, created_at, updated_at
+       from lesson_activity_blocks where lesson_id = any($1::uuid[]) order by lesson_id, sort_order, created_at`,
+      [lessonIds]
+    );
+  }
+  const blockByLesson = {};
+  for (const b of blocks.rows) {
+    if (!blockByLesson[b.lesson_id]) blockByLesson[b.lesson_id] = [];
+    blockByLesson[b.lesson_id].push(b);
+  }
+  const lessonByModule = {};
+  for (const l of lessons.rows) {
+    l.activity_blocks = blockByLesson[l.id] || [];
+    if (!lessonByModule[l.module_id]) lessonByModule[l.module_id] = [];
+    lessonByModule[l.module_id].push(l);
+  }
+  for (const m of modules.rows) {
+    m.lessons = lessonByModule[m.id] || [];
+  }
+  return { course, modules: modules.rows };
+}
+
+async function getCourseProgress(courseId, userId, requestingUser) {
+  await ensure();
+  
+  // Check permissions: school admin or the student themselves
+  const isSchoolAdmin = requestingUser.role === "school_admin" || requestingUser.role === "system_admin";
+  const isOwnProgress = requestingUser.id === userId;
+  
+  if (!isSchoolAdmin && !isOwnProgress) {
+    const error = new Error("Unauthorized to view this progress");
+    error.statusCode = 403;
+    throw error;
+  }
+
+  const progress = await one(
+    `select 
+      coalesce(jsonb_agg(ce.lesson_id) filter (where ce.lesson_id is not null), '[]'::jsonb) as completed_lessons,
+      coalesce(jsonb_agg(ce.activity_block_id) filter (where ce.activity_block_id is not null), '[]'::jsonb) as completed_activities,
+      coalesce(ce.total_score, 0) as total_score
+     from course_enrolments ce
+     where ce.course_id = $1 and ce.user_id = $2 and ce.deleted_at is null`,
+    [courseId, userId]
+  );
+  
+  if (!progress) {
+    return {
+      completed_lessons: [],
+      completed_activities: [],
+      total_score: 0
+    };
+  }
+  
+  return {
+    completed_lessons: progress.completed_lessons || [],
+    completed_activities: progress.completed_activities || [],
+    total_score: progress.total_score || 0
+  };
+}
+
+async function markLessonComplete(courseId, lessonId, userId, requestingUser) {
+  await ensure();
+  
+  // Check permissions: school admin or the student themselves
+  const isSchoolAdmin = requestingUser.role === "school_admin" || requestingUser.role === "system_admin";
+  const isOwnProgress = requestingUser.id === userId;
+  
+  if (!isSchoolAdmin && !isOwnProgress) {
+    const error = new Error("Unauthorized to mark lesson complete");
+    error.statusCode = 403;
+    throw error;
+  }
+
+  // Check enrollment
+  const enrollment = await one(
+    `select id, completed_lessons from course_enrolments 
+     where course_id = $1 and user_id = $2 and deleted_at is null`,
+    [courseId, userId]
+  );
+  
+  if (!enrollment) {
+    const error = new Error("Not enrolled in this course");
+    error.statusCode = 403;
+    throw error;
+  }
+
+  const completedLessons = enrollment.completed_lessons || [];
+  if (!completedLessons.includes(lessonId)) {
+    completedLessons.push(lessonId);
+    await query(
+      `update course_enrolments 
+       set completed_lessons = $1::jsonb, updated_at = now()
+       where id = $2`,
+      [JSON.stringify(completedLessons), enrollment.id]
+    );
+  }
+  
+  return { ok: true };
+}
+
+async function submitActivityBlock(blockId, submission, requestingUser) {
+  await ensure();
+  
+  // Get the activity block and lesson
+  const block = await one(
+    `select b.id, b.lesson_id, b.activity_type, b.payload, l.module_id, m.course_id
+     from lesson_activity_blocks b
+     join lessons l on l.id = b.lesson_id
+     join modules m on m.id = l.module_id
+     where b.id = $1`,
+    [blockId]
+  );
+  
+  if (!block) {
+    const error = new Error("Activity block not found");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const userId = submission.userId || requestingUser.id;
+  
+  // Check permissions: school admin or the student themselves
+  const isSchoolAdmin = requestingUser.role === "school_admin" || requestingUser.role === "system_admin";
+  const isOwnSubmission = requestingUser.id === userId;
+  
+  if (!isSchoolAdmin && !isOwnSubmission) {
+    const error = new Error("Unauthorized to submit activity");
+    error.statusCode = 403;
+    throw error;
+  }
+
+  // Check enrollment
+  const enrollment = await one(
+    `select id, completed_activities from course_enrolments 
+     where course_id = $1 and user_id = $2 and deleted_at is null`,
+    [block.course_id, userId]
+  );
+  
+  if (!enrollment) {
+    const error = new Error("Not enrolled in this course");
+    error.statusCode = 403;
+    throw error;
+  }
+
+  const completedActivities = enrollment.completed_activities || [];
+  if (!completedActivities.includes(blockId)) {
+    completedActivities.push(blockId);
+    
+    // Calculate score for quiz activities
+    let score = 0;
+    if (block.activity_type === "quiz" && submission.answer) {
+      const quizData = block.payload?.quiz || {};
+      if (quizData.options && quizData.correctIndex !== undefined) {
+        const correctAnswer = quizData.options[quizData.correctIndex];
+        if (submission.answer === correctAnswer) {
+          score = block.marks_weight || 10;
+        }
+      }
+    }
+    
+    // Update enrollment
+    await query(
+      `update course_enrolments 
+       set completed_activities = $1::jsonb, 
+           total_score = total_score + $2,
+           updated_at = now()
+       where id = $3`,
+      [JSON.stringify(completedActivities), score, enrollment.id]
+    );
+  }
+  
+  return { ok: true, score };
+}
+
 module.exports = {
   getBlueprint,
+  viewCourse,
+  getCourseProgress,
+  markLessonComplete,
+  submitActivityBlock,
   patchCourse,
   createModule,
   updateModule,
