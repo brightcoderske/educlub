@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { api } from "@/lib/api";
+import { api } from "../../lib/api";
 
 export default function ReportsPage() {
   const [schools, setSchools] = useState([]);
@@ -18,9 +18,8 @@ export default function ReportsPage() {
   useEffect(() => {
     async function fetchSchools() {
       try {
-        const res = await api.get("/schools");
-        const list = await res.json();
-        setSchools(Array.isArray(list) ? list : []);
+        const list = await api.get("/schools");
+        setSchools(Array.isArray(list?.data) ? list.data : Array.isArray(list) ? list : []);
       } catch {
         setSchools([]);
       }
@@ -39,8 +38,7 @@ export default function ReportsPage() {
     }
     async function fetchGrades() {
       try {
-        const res = await api.get(`/classes?schoolId=${selectedSchool}`);
-        const list = await res.json();
+        const list = await api.get(`/classes?schoolId=${selectedSchool}`);
         setGrades(Array.isArray(list) ? list : []);
       } catch {
         setGrades([]);
@@ -58,8 +56,7 @@ export default function ReportsPage() {
     }
     async function fetchStreams() {
       try {
-        const res = await api.get(`/streams?schoolId=${selectedSchool}&classId=${selectedGrade}`);
-        const list = await res.json();
+        const list = await api.get(`/streams?schoolId=${selectedSchool}&classId=${selectedGrade}`);
         setStreams(Array.isArray(list) ? list : []);
       } catch {
         setStreams([]);

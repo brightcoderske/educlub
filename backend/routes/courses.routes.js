@@ -23,6 +23,7 @@ router.get("/meta/activity-types", courseBuilder.activityTypes);
 
 router.get("/:id/builder", courseBuilder.getBlueprint);
 router.patch("/:id/builder", courseBuilder.patchCourse);
+router.post("/:id/cover-image", memoryUpload.single("image"), courseBuilder.uploadCourseCover);
 
 router.post("/:courseId/modules", courseBuilder.createModule);
 router.patch("/:courseId/modules/reorder", courseBuilder.reorderModules);

@@ -23,6 +23,11 @@ const submitActivityBlock = wrap(async (req, res) => res.json(await courseBuilde
 
 const patchCourse = wrap(async (req, res) => res.json(await courseBuilder.patchCourse(req.params.id, req.body, req.user)));
 
+const uploadCourseCover = wrap(async (req, res) => {
+  const result = await courseBuilder.uploadCourseCover(req.params.id, req.file, req.user);
+  res.status(201).json(result);
+});
+
 const createModule = wrap(async (req, res) =>
   res.status(201).json(await courseBuilder.createModule(req.params.courseId, req.body, req.user))
 );
@@ -72,6 +77,7 @@ module.exports = {
   markLessonComplete,
   submitActivityBlock,
   patchCourse,
+  uploadCourseCover,
   createModule,
   updateModule,
   deleteModule,

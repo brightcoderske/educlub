@@ -80,7 +80,8 @@ async function generateCertificateForUser(courseId, userId, user) {
     completion_date: new Date().toISOString(),
     certification_uuid: certification.certification_uuid,
     pattern: certification.config.pattern || "modern",
-    instructor_name: certification.config.instructor_name || "Instructor"
+    instructor_name: certification.config.instructor_name || certification.config.instructorName || "Instructor",
+    config: certification.config
   };
   
   return certificateData;

@@ -4,7 +4,8 @@ async function addCertificationSchema() {
   console.log("Adding certification schema...");
 
   try {
-    // Create certifications table
+    await query("select pg_advisory_lock(hashtext('educlub_certification_schema'))");
+
     await query(`
       CREATE TABLE IF NOT EXISTS certifications (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -16,9 +17,7 @@ async function addCertificationSchema() {
         updated_at TIMESTAMP DEFAULT NOW()
       )
     `);
-    console.log("✓ Created certifications table");
 
-    // Add indexes
     await query(`
       CREATE INDEX IF NOT EXISTS idx_certifications_course_id ON certifications(course_id)
     `);
@@ -28,9 +27,7 @@ async function addCertificationSchema() {
     await query(`
       CREATE INDEX IF NOT EXISTS idx_certifications_uuid ON certifications(certification_uuid)
     `);
-    console.log("✓ Created certifications indexes");
 
-    // Add trigger for updated_at
     await query(`
       CREATE OR REPLACE FUNCTION update_certifications_updated_at()
       RETURNS TRIGGER AS $$
@@ -51,16 +48,16 @@ async function addCertificationSchema() {
         FOR EACH ROW
         EXECUTE FUNCTION update_certifications_updated_at()
     `);
-    console.log("✓ Created certifications updated_at trigger");
 
-    console.log("\n✓ Certification schema added successfully!");
+    console.log("Certification schema is ready.");
   } catch (error) {
-    console.error("✗ Error adding certification schema:", error);
+    console.error("Error adding certification schema:", error);
     throw error;
+  } finally {
+    await query("select pg_advisory_unlock(hashtext('educlub_certification_schema'))").catch(() => {});
   }
 }
 
-// Run if executed directly
 if (require.main === module) {
   addCertificationSchema()
     .then(() => process.exit(0))

@@ -6,7 +6,8 @@ const { recordAudit } = require("../utils/audit");
 
 const { ensureDefaultCourses } = require("../utils/courseSeed");
 
-const { ensureTypingColumns } = require("../utils/schemaGuard");
+const { ensureTypingColumns, ensureLearnerProfilesSchema } = require("../utils/schemaGuard");
+const { buildTermWeeks, availabilityForWeek, moduleOpenDateForWeek } = require("./termWeeks.service");
 
 
 
@@ -42,6 +43,28 @@ function scopedSchoolId(user) {
 
   return user.school_id;
 
+}
+
+async function ensureActivitySubmissionReviewSchema() {
+  await query(`
+    create table if not exists student_activity_submissions (
+      id uuid primary key default gen_random_uuid(),
+      activity_block_id uuid not null references lesson_activity_blocks(id) on delete cascade,
+      user_id uuid not null references users(id) on delete cascade,
+      answer jsonb not null default '{}'::jsonb,
+      submission jsonb not null default '{}'::jsonb,
+      score numeric(6,2) not null default 0,
+      attempts integer not null default 1,
+      time_spent_seconds integer not null default 0,
+      submitted_at timestamptz not null default now(),
+      updated_at timestamptz not null default now(),
+      unique (activity_block_id, user_id)
+    )
+  `);
+  await query("alter table student_activity_submissions add column if not exists feedback text");
+  await query("alter table student_activity_submissions add column if not exists review_status text not null default 'submitted'");
+  await query("alter table student_activity_submissions add column if not exists reviewed_by uuid references users(id) on delete set null");
+  await query("alter table student_activity_submissions add column if not exists reviewed_at timestamptz");
 }
 
 
@@ -210,6 +233,31 @@ async function terms(user) {
 
 }
 
+async function termWeeks(user, termId = null) {
+  scopedSchoolId(user);
+  const term = termId
+    ? await one(
+      `select t.id, coalesce(t.label, t.name::text) as name, t.starts_on, t.ends_on, ay.year
+       from terms t
+       join academic_years ay on ay.id = t.academic_year_id
+       where t.id = $1`,
+      [termId]
+    )
+    : await activeTerm(user);
+
+  if (!term && !termId) {
+    return { term: null, weeks: [] };
+  }
+
+  if (!term) {
+    const error = new Error("Term not found");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  return { term, weeks: buildTermWeeks(term) };
+}
+
 
 
 async function dashboardSummary(user, params = {}) {
@@ -370,6 +418,66 @@ async function enrolmentByCourse(user, params = {}) {
 
 }
 
+async function courseCertificateLearners(user, courseId, params = {}) {
+  const schoolId = scopedSchoolId(user);
+  const termId = params.term_id || null;
+  const course = await one(
+    `select id, coalesce(name, title) as name from courses where id = $1 and deleted_at is null`,
+    [courseId]
+  );
+  if (!course) {
+    const error = new Error("Course not found");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const total = await one(
+    `select count(*)::int as total
+     from lesson_activity_blocks b
+     join lessons l on l.id = b.lesson_id
+     join modules m on m.id = l.module_id
+     where m.course_id = $1`,
+    [courseId]
+  );
+
+  const result = await query(
+    `select u.id, coalesce(u.full_name, u.name, concat_ws(' ', u.first_name, u.last_name)) as learner_name,
+            u.email, u.grade, u.stream,
+            count(distinct sa.activity_block_id)::int as completed_activities
+     from enrolments e
+     left join learner_profiles lp on lp.id = e.learner_id
+     join users u on u.id = e.learner_id or u.id = lp.user_id
+     left join student_activity_submissions sa on sa.user_id = u.id
+     left join lesson_activity_blocks b on b.id = sa.activity_block_id
+     left join lessons l on l.id = b.lesson_id
+     left join modules m on m.id = l.module_id and m.course_id = e.course_id
+     where e.school_id = $1
+       and e.course_id = $2
+       and e.status = 'active'
+       and ($3::uuid is null or e.term_id = $3)
+       and u.role = 'student'
+       and u.deleted_at is null
+       and (m.course_id = $2 or sa.id is null)
+     group by u.id, learner_name, u.email, u.grade, u.stream
+     order by learner_name`,
+    [schoolId, courseId, termId]
+  );
+
+  const totalActivities = Number(total?.total || 0);
+  return {
+    course,
+    total_activities: totalActivities,
+    learners: result.rows.map((row) => {
+      const completion_percent = totalActivities ? Math.round((Number(row.completed_activities || 0) / totalActivities) * 100) : 0;
+      return {
+        ...row,
+        completion_percent,
+        certificate_ready: completion_percent >= 80
+      };
+    })
+  };
+}
+
 
 
 async function classProgress(user, params = {}) {
@@ -493,6 +601,7 @@ async function generateUsername(fullName, schoolId, client = { query }) {
 
 
 async function upsertLearnerProfile(client, schoolId, learner) {
+  await ensureLearnerProfilesSchema(client);
 
   const result = await client.query(
 
@@ -1000,6 +1109,8 @@ async function promoteLearner(user, learnerId, payload = {}) {
 
 async function listSubmissions(user, params = {}) {
 
+  await ensureActivitySubmissionReviewSchema();
+
   const schoolId = scopedSchoolId(user);
 
   const { limit, offset } = pagination(params);
@@ -1008,23 +1119,48 @@ async function listSubmissions(user, params = {}) {
 
   return list(
 
-    `select s.id, s.learner_id, s.term_id, s.lesson_id, s.file_url, s.status, s.feedback, s.reviewed_at, s.created_at,
+    `select * from (
+       select s.id::text as id, 'file' as source, s.learner_id, s.term_id, s.lesson_id, null::uuid as activity_block_id,
+              s.file_url, s.status, s.feedback, s.reviewed_at, s.created_at,
+              u.full_name as learner_name, u.grade, u.stream, c.name as course_name, l.title as lesson_name,
+              'File upload' as activity_type, '{}'::jsonb as answer, '{}'::jsonb as submission, null::numeric as score
+       from submissions s
+       join users u on u.id = s.learner_id
+       left join lessons l on l.id = s.lesson_id
+       left join modules m on m.id = l.module_id
+       left join courses c on c.id = m.course_id
+       where s.school_id = $1 and ($2::uuid is null or s.term_id = $2)
 
-            u.full_name as learner_name, u.grade, u.stream
+       union all
 
-     from submissions s
-
-     join users u on u.id = s.learner_id
-
-     where s.school_id = $1 and ($2::uuid is null or s.term_id = $2)
-
-     order by case when s.status = 'submitted' then 0 else 1 end, s.created_at desc
-
+       select ('activity:' || sa.id)::text as id, 'activity' as source, u.id as learner_id, null::uuid as term_id, l.id as lesson_id,
+              b.id as activity_block_id, null::text as file_url, coalesce(sa.review_status, 'submitted') as status, sa.feedback,
+              sa.reviewed_at, sa.submitted_at as created_at, u.full_name as learner_name, u.grade, u.stream,
+              c.name as course_name, l.title as lesson_name, b.activity_type, sa.answer, sa.submission, sa.score
+       from student_activity_submissions sa
+       join users u on u.id = sa.user_id
+       join lesson_activity_blocks b on b.id = sa.activity_block_id
+       join lessons l on l.id = b.lesson_id
+       join modules m on m.id = l.module_id
+       join courses c on c.id = m.course_id
+       where u.school_id = $1
+         and b.activity_type in ('assignment_submission', 'submission', 'practice_code', 'auto_marked_code', 'practice', 'creative_corner', 'teacher_task', 'runnable_code', 'quiz')
+     ) rows
+     order by case when status = 'submitted' then 0 else 1 end, created_at desc
      limit $3 offset $4`,
 
     [schoolId, termId, limit, offset],
 
-    "select count(*) from submissions where school_id = $1 and ($2::uuid is null or term_id = $2)",
+    `select count(*) from (
+       select s.id from submissions s where s.school_id = $1 and ($2::uuid is null or s.term_id = $2)
+       union all
+       select sa.id
+       from student_activity_submissions sa
+       join users u on u.id = sa.user_id
+       join lesson_activity_blocks b on b.id = sa.activity_block_id
+       where u.school_id = $1
+         and b.activity_type in ('assignment_submission', 'submission', 'practice_code', 'auto_marked_code', 'practice', 'creative_corner', 'teacher_task', 'runnable_code', 'quiz')
+     ) counts`,
 
     [schoolId, termId]
 
@@ -1036,7 +1172,22 @@ async function listSubmissions(user, params = {}) {
 
 async function reviewSubmission(user, submissionId, payload) {
 
+  await ensureActivitySubmissionReviewSchema();
+
   const schoolId = scopedSchoolId(user);
+
+  if (String(submissionId).startsWith("activity:")) {
+    const activitySubmissionId = String(submissionId).replace("activity:", "");
+    return one(
+      `update student_activity_submissions sa
+       set feedback = $3, review_status = 'reviewed', reviewed_by = $4, reviewed_at = now(), updated_at = now()
+       from users u
+       where sa.id = $1 and sa.user_id = u.id and u.school_id = $2
+       returning ('activity:' || sa.id)::text as id, 'activity' as source, sa.activity_block_id, sa.user_id as learner_id,
+                 sa.feedback, sa.review_status as status, sa.reviewed_at, sa.submitted_at as created_at, sa.score, sa.answer, sa.submission`,
+      [activitySubmissionId, schoolId, payload.feedback, user.sub]
+    );
+  }
 
   return one(
 
@@ -1300,7 +1451,9 @@ async function assignTypingTest(user, testId, payload = {}) {
 
   const grades = normalizeGrades(payload.grades || payload.grade_levels);
 
-  const term = payload.term_id ? { id: payload.term_id } : await activeTerm(user);
+  const term = payload.term_id
+    ? await one("select id, starts_on, ends_on from terms where id = $1", [payload.term_id])
+    : await activeTerm(user);
 
   const termId = term?.id || null;
 
@@ -1350,6 +1503,16 @@ async function assignTypingTest(user, testId, payload = {}) {
 
   }
 
+  const availability = payload.week_number
+    ? availabilityForWeek(term, payload.week_number)
+    : { available_from: payload.available_from || null, available_until: payload.available_until || null };
+
+  if (payload.week_number && !availability) {
+    const error = new Error("Selected week is not inside the active term");
+    error.statusCode = 400;
+    throw error;
+  }
+
   return transaction(async (client) => {
 
     const assigned = [];
@@ -1358,15 +1521,17 @@ async function assignTypingTest(user, testId, payload = {}) {
 
       const result = await client.query(
 
-        `insert into typing_assignments (typing_test_id, school_id, term_id, grade, assigned_by, available_from, available_until, is_active)
+        `insert into typing_assignments (typing_test_id, school_id, term_id, grade, assigned_by, week_number, available_from, available_until, is_active)
 
-         values ($1, $2, $3, $4, $5, $6, $7, true)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, true)
 
          on conflict (typing_test_id, school_id, term_id, grade) do update set
 
            available_from = excluded.available_from,
 
            available_until = excluded.available_until,
+
+           week_number = excluded.week_number,
 
            is_active = true,
 
@@ -1376,7 +1541,7 @@ async function assignTypingTest(user, testId, payload = {}) {
 
          returning *`,
 
-        [testId, schoolId, termId, grade, user.sub, payload.available_from || null, payload.available_until || null]
+        [testId, schoolId, termId, grade, user.sub, payload.week_number || null, availability.available_from, availability.available_until]
 
       );
 
@@ -1400,7 +1565,7 @@ async function assignTypingTest(user, testId, payload = {}) {
 
       termId,
 
-      metadata: { grades, count: assigned.length }
+      metadata: { grades, count: assigned.length, week_number: payload.week_number || null }
 
     });
 
@@ -1840,7 +2005,9 @@ async function assignQuiz(user, quizId, payload) {
 
   const grades = normalizeGrades(payload.grades || payload.grade_levels);
 
-  const term = payload.term_id ? { id: payload.term_id } : await activeTerm(user);
+  const term = payload.term_id
+    ? await one("select id, starts_on, ends_on from terms where id = $1", [payload.term_id])
+    : await activeTerm(user);
 
   const termId = term?.id || null;
 
@@ -1896,6 +2063,16 @@ async function assignQuiz(user, quizId, payload) {
 
   }
 
+  const availability = payload.week_number
+    ? availabilityForWeek(term, payload.week_number)
+    : { available_from: payload.available_from || null, available_until: payload.available_until || null };
+
+  if (payload.week_number && !availability) {
+    const error = new Error("Selected week is not inside the active term");
+    error.statusCode = 400;
+    throw error;
+  }
+
 
 
   return transaction(async (client) => {
@@ -1906,9 +2083,9 @@ async function assignQuiz(user, quizId, payload) {
 
       const result = await client.query(
 
-        `insert into quiz_assignments (quiz_id, school_id, term_id, grade, assigned_by, max_attempts, available_from, available_until, is_active)
+        `insert into quiz_assignments (quiz_id, school_id, term_id, grade, assigned_by, max_attempts, week_number, available_from, available_until, is_active)
 
-         values ($1, $2, $3, $4, $5, $6, $7, $8, true)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, true)
 
          on conflict (quiz_id, school_id, term_id, grade) do update set
 
@@ -1918,6 +2095,8 @@ async function assignQuiz(user, quizId, payload) {
 
            available_until = excluded.available_until,
 
+           week_number = excluded.week_number,
+
            is_active = true,
 
            assigned_by = excluded.assigned_by,
@@ -1926,7 +2105,7 @@ async function assignQuiz(user, quizId, payload) {
 
          returning *`,
 
-        [quizId, schoolId, termId, grade, user.sub, Number(payload.max_attempts || quiz.max_attempts || 1), payload.available_from || null, payload.available_until || null]
+        [quizId, schoolId, termId, grade, user.sub, Number(payload.max_attempts || quiz.max_attempts || 1), payload.week_number || null, availability.available_from, availability.available_until]
 
       );
 
@@ -1950,7 +2129,7 @@ async function assignQuiz(user, quizId, payload) {
 
       termId,
 
-      metadata: { grades, count: assigned.length }
+      metadata: { grades, count: assigned.length, week_number: payload.week_number || null }
 
     });
 
@@ -2826,7 +3005,8 @@ async function availableCourses(user) {
 
   const result = await query(
 
-    `select c.id, coalesce(c.name, c.title) as name, c.club, coalesce(c.objectives, c.description) as objectives, c.is_coming_soon,
+    `select c.id, coalesce(c.name, c.title) as name, c.club, coalesce(c.objectives, c.description) as objectives,
+            c.cover_image_url, c.is_coming_soon,
 
             coalesce(json_agg(json_build_object('id', m.id, 'name', coalesce(m.name, m.title), 'sort_order', m.sort_order) order by m.sort_order) filter (where m.id is not null), '[]'::json) as modules
 
@@ -2852,7 +3032,9 @@ async function bulkAllocateCourse(user, payload) {
 
   const schoolId = scopedSchoolId(user);
 
-  const term = payload.term_id ? { id: payload.term_id } : await activeTerm(user);
+  const term = payload.term_id
+    ? await one("select id, starts_on, ends_on from terms where id = $1", [payload.term_id])
+    : await activeTerm(user);
 
   const termId = term?.id || null;
 
@@ -2881,6 +3063,7 @@ async function bulkAllocateCourse(user, payload) {
 
 
   return transaction(async (client) => {
+    await ensureLearnerProfilesSchema(client);
 
     const enrolmentLearnerTable = await enrolmentLearnerReferenceTable(client);
 
@@ -2937,22 +3120,39 @@ async function bulkAllocateCourse(user, payload) {
     }
 
     const moduleAvailability = payload.module_availability || {};
+    const moduleWeeks = payload.module_weeks || {};
 
-    for (const [moduleId, availableFrom] of Object.entries(moduleAvailability)) {
+    const moduleIds = [...new Set([...Object.keys(moduleAvailability), ...Object.keys(moduleWeeks)])];
+
+    for (const moduleId of moduleIds) {
+      const availableFrom = moduleAvailability[moduleId];
+      const weekOpenDate = moduleWeeks[moduleId]
+        ? moduleOpenDateForWeek(term, moduleWeeks[moduleId])
+        : null;
+
+      if (moduleWeeks[moduleId] && !weekOpenDate) {
+        const error = new Error("Selected module week is not inside the active term");
+        error.statusCode = 400;
+        throw error;
+      }
 
       await client.query(
 
-        `insert into course_module_availability (school_id, course_id, module_id, available_from, created_by)
+        `insert into course_module_availability (school_id, term_id, course_id, module_id, week_number, available_from, created_by)
 
-         values ($1, $2, $3, $4, $5)
+         values ($1, $2, $3, $4, $5, $6, $7)
 
          on conflict (school_id, module_id) do update set
 
            available_from = excluded.available_from,
 
+           term_id = excluded.term_id,
+
+           week_number = excluded.week_number,
+
            updated_at = now()`,
 
-        [schoolId, payload.course_id, moduleId, availableFrom || null, user.sub]
+        [schoolId, termId, payload.course_id, moduleId, moduleWeeks[moduleId] || null, weekOpenDate || availableFrom || null, user.sub]
 
       );
 
@@ -3062,6 +3262,8 @@ module.exports = {
 
   terms,
 
+  termWeeks,
+
   dashboardSummary,
 
   enrolmentByCourse,
@@ -3135,6 +3337,8 @@ module.exports = {
   deleteStream,
 
   availableCourses,
+
+  courseCertificateLearners,
 
   bulkAllocateCourse,
 

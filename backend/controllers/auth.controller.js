@@ -10,8 +10,18 @@ async function login(req, res, next) {
   }
 }
 
+async function verifyTwoFactor(req, res, next) {
+  try {
+    const result = await authService.verifyTwoFactor(req.body);
+    res.json(result);
+  } catch (error) {
+    res.status(error.statusCode || 500);
+    next(error);
+  }
+}
+
 async function me(req, res) {
   res.json({ user: req.user });
 }
 
-module.exports = { login, me };
+module.exports = { login, verifyTwoFactor, me };

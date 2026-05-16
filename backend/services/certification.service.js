@@ -7,7 +7,11 @@ async function ensure() {
 }
 
 async function getCertificationsByCourse(courseId, user) {
-  assertSystemAdmin(user);
+  if (!user || !["system_admin", "school_admin"].includes(user.role)) {
+    const error = new Error("Certification access required");
+    error.statusCode = 403;
+    throw error;
+  }
   await ensure();
   
   const result = await query(

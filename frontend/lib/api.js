@@ -24,7 +24,7 @@ async function request(path, options = {}) {
   if (!response.ok) {
     const message = body?.error?.message || "Request failed";
     const details = body?.error?.details;
-    if (response.status === 401 && typeof window !== "undefined") {
+    if (response.status === 401 && typeof window !== "undefined" && !path.startsWith("/auth/")) {
       window.localStorage.removeItem("educlub_token");
       window.localStorage.removeItem("educlub_user");
       window.location.href = "/login";

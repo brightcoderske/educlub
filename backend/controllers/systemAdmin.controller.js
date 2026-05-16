@@ -25,6 +25,7 @@ const listAcademicYears = wrap(async (req, res) => res.json(await service.listAc
 const listTerms = wrap(async (req, res) => res.json(await service.listTerms(req.query)));
 const createAcademicYear = wrap(async (req, res) => res.status(201).json(await service.createAcademicYear(req.body, req.user)));
 const createTerm = wrap(async (req, res) => res.status(201).json(await service.createTerm(req.body, req.user)));
+const updateTerm = wrap(async (req, res) => res.json(await service.updateTerm(req.params.id, req.body, req.user)));
 const setGlobalActiveTerm = wrap(async (req, res) => res.json(await service.setGlobalActiveTerm(req.params.id, req.user)));
 
 const listUsers = wrap(async (req, res) => res.json(await service.listUsers(req.query)));
@@ -156,6 +157,7 @@ module.exports = {
   listTerms,
   createAcademicYear,
   createTerm,
+  updateTerm,
   setGlobalActiveTerm,
   listUsers,
   createSchoolAdmin,

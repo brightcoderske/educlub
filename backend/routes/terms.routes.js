@@ -11,5 +11,6 @@ router.get("/academic-years", controller.listAcademicYears);
 router.post("/academic-years", controller.createAcademicYear);
 router.post("/", controller.createTerm);
 router.patch("/:id/global-active", controller.setGlobalActiveTerm);
+router.patch("/:id", controller.updateTerm);
 
 module.exports = router;

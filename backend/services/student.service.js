@@ -1,6 +1,6 @@
 const { one, query } = require("../config/database");
 const { recordAudit } = require("../utils/audit");
-const { ensureTypingColumns, ensureCourseBuilderSchema } = require("../utils/schemaGuard");
+const { ensureTypingColumns, ensureCourseBuilderSchema, ensureLearnerProfilesSchema } = require("../utils/schemaGuard");
 
 function assertStudent(user) {
   if (!user || user.role !== "student") {
@@ -203,6 +203,8 @@ function typingMetrics(passage, typedText, elapsedSeconds) {
 
 async function learnerContext(user) {
   assertStudent(user);
+  await ensureLearnerProfilesSchema({ query });
+
   const learner = await one(
     `select u.id, u.school_id, coalesce(u.full_name, u.name) as full_name, u.username, u.grade, u.stream,
             u.last_login_at, u.previous_login_at, s.name as school_name, s.logo_url as school_logo_url, lp.id as learner_profile_id
@@ -239,7 +241,7 @@ async function dashboard(user, params = {}) {
   const [courses, progress, typing, quizzes, reports, leaderboards, submissions, assignedQuizzes, assignedTypingTests, quizTrend, typingTrend, quizLeaders, typingLeaders] = await Promise.all([
     query(
       `select e.id as enrolment_id, e.status, e.created_at, e.term_id,
-              coalesce(c.name, c.title) as course_name, c.id as course_id, c.club, coalesce(c.objectives, c.description) as objectives,
+              coalesce(c.name, c.title) as course_name, c.id as course_id, c.club, c.cover_image_url, coalesce(c.objectives, c.description) as objectives,
               coalesce(t.label, t.name::text) as term_name, ay.year
        from enrolments e
        join courses c on c.id = e.course_id
@@ -774,10 +776,10 @@ async function courseForLearning(user, courseId) {
     `select m.id, m.course_id, coalesce(m.name, m.title) as name, coalesce(m.objectives, m.description) as objectives, m.sort_order, m.badge_name, m.xp_points,
             coalesce(cma.available_from, m.available_from) as available_from
      from modules m
-     left join course_module_availability cma on cma.module_id = m.id and cma.school_id = $2
+     left join course_module_availability cma on cma.module_id = m.id and cma.school_id = $2 and ($3::uuid is null or cma.term_id is null or cma.term_id = $3)
      where m.course_id = $1
      order by m.sort_order`,
-    [courseId, learner.school_id]
+    [courseId, learner.school_id, termId]
   );
   const lessons = await query(
     `select l.id, l.module_id, coalesce(l.name, l.title) as name,

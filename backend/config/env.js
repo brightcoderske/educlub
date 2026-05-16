@@ -33,6 +33,13 @@ module.exports = {
     databaseUrl: getEnv("DATABASE_URL"),
     jwtSecret: getEnv("JWT_SECRET"),
     jwtExpiresIn: getEnv("JWT_EXPIRES_IN", "1h"),
-    refreshTokenExpiresIn: getEnv("REFRESH_TOKEN_EXPIRES_IN", "7d")
+    refreshTokenExpiresIn: getEnv("REFRESH_TOKEN_EXPIRES_IN", "7d"),
+    smtpHost: getEnv("SMTP_HOST", "smtp.gmail.com"),
+    smtpPort: Number(getEnv("SMTP_PORT", 465)),
+    smtpSecure: getEnv("SMTP_SECURE", "true") === "true",
+    smtpUser: getEnv("SMTP_USER"),
+    smtpPass: getEnv("SMTP_PASS"),
+    smtpFrom: getEnv("SMTP_FROM", getEnv("SMTP_USER")),
+    twoFactorCodeMinutes: Number(getEnv("TWO_FACTOR_CODE_MINUTES", 10))
   }
 };

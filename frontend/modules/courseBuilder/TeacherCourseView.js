@@ -1,10 +1,19 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { api } from "../../../lib/api";
-import { ArrowLeft, PlayCircle, BookOpen, Users, Award, Clock, CheckCircle, ChevronDown, ChevronRight, Edit, ChevronUp, Settings } from "lucide-react";
+import { api, assetUrl } from "../../lib/api";
+import { currentUser } from "../../lib/auth";
+import { ArrowLeft, PlayCircle, ChevronDown, ChevronRight, ChevronUp, Settings } from "lucide-react";
 import EditCourseCertification from "./components/EditCourseCertification";
+
+function flattenLessons(modules) {
+  return (modules || []).flatMap((module) => (module.lessons || []).map((lesson) => ({
+    ...lesson,
+    moduleId: module.id,
+    moduleName: module.name || module.title
+  })));
+}
 
 function TeacherCourseView({ courseId }) {
   const router = useRouter();
@@ -16,23 +25,28 @@ function TeacherCourseView({ courseId }) {
   const [expandedTasks, setExpandedTasks] = useState(new Set());
   const [currentLesson, setCurrentLesson] = useState(null);
   const [showCertConfig, setShowCertConfig] = useState(false);
+  const user = currentUser();
+  const canConfigureCertificate = user?.role === "system_admin";
+
+  async function loadCourse() {
+    setLoading(true);
+    try {
+      const data = await api.get(`/courses/${courseId}/view`);
+      setBlueprint(data);
+      if (data.modules && data.modules.length > 0) {
+        const firstLesson = data.modules[0].lessons?.[0] || null;
+        setExpandedModules(new Set([data.modules[0].id]));
+        setExpandedLessons(firstLesson ? new Set([firstLesson.id]) : new Set());
+        setCurrentLesson(firstLesson ? { ...firstLesson, moduleId: data.modules[0].id, moduleName: data.modules[0].name || data.modules[0].title } : null);
+      }
+    } catch (err) {
+      setError(err.message || "Failed to load course");
+    } finally {
+      setLoading(false);
+    }
+  }
 
   useEffect(() => {
-    async function loadCourse() {
-      setLoading(true);
-      try {
-        const data = await api.get(`/courses/${courseId}/view`);
-        setBlueprint(data);
-        if (data.modules && data.modules.length > 0) {
-          setExpandedModules(new Set([data.modules[0].id]));
-        }
-      } catch (err) {
-        setError(err.message || "Failed to load course");
-      } finally {
-        setLoading(false);
-      }
-    }
-
     if (courseId) {
       loadCourse();
     }
@@ -82,6 +96,14 @@ function TeacherCourseView({ courseId }) {
 
   const course = blueprint?.course;
   const modules = blueprint?.modules || [];
+  const lessons = flattenLessons(modules);
+  const currentIndex = currentLesson ? lessons.findIndex((lesson) => lesson.id === currentLesson.id) : -1;
+  const goToLesson = (lesson) => {
+    if (!lesson) return;
+    selectLesson(lesson);
+    setExpandedModules((prev) => new Set([...prev, lesson.moduleId]));
+    setExpandedLessons((prev) => new Set([...prev, lesson.id]));
+  };
 
   const totalLessons = modules.reduce((sum, m) => sum + (m.lessons?.length || 0), 0);
   const totalActivities = modules.reduce((sum, m) => 
@@ -105,12 +127,21 @@ function TeacherCourseView({ courseId }) {
                 <p className="text-sm text-gray-500">Teacher view</p>
               </div>
             </div>
+            {canConfigureCertificate ? (
+              <button
+                onClick={() => setShowCertConfig(true)}
+                className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
+              >
+                <Settings size={18} />
+                <span className="text-sm font-medium">Configure Certificate</span>
+              </button>
+            ) : null}
             <button
-              onClick={() => setShowCertConfig(true)}
-              className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
+              type="button"
+              onClick={loadCourse}
+              className="flex items-center gap-2 rounded-lg bg-gray-100 px-4 py-2 text-sm font-bold text-gray-700 transition-colors hover:bg-gray-200"
             >
-              <Settings size={18} />
-              <span className="text-sm font-medium">Configure Certificate</span>
+              Refresh
             </button>
           </div>
         </div>
@@ -190,7 +221,7 @@ function TeacherCourseView({ courseId }) {
                                               <div dangerouslySetInnerHTML={{ __html: block.payload.richText }} />
                                             )}
                                             {block.payload.instructions && (
-                                              <p>{block.payload.instructions}</p>
+                                              <p className="whitespace-pre-wrap">{block.payload.instructions}</p>
                                             )}
                                           </div>
                                         )}
@@ -217,8 +248,29 @@ function TeacherCourseView({ courseId }) {
                   <span className="text-xs text-gray-500 uppercase tracking-wide">{currentLesson.moduleName}</span>
                   <h2 className="text-2xl font-bold text-gray-900 mt-1">{currentLesson.name}</h2>
                   {currentLesson.description && (
-                    <p className="text-gray-600 mt-2">{currentLesson.description}</p>
+                    <p className="text-gray-600 mt-2 whitespace-pre-wrap">{currentLesson.description}</p>
                   )}
+                  <div className="mt-5 flex items-center justify-between gap-3">
+                    <button
+                      type="button"
+                      disabled={currentIndex <= 0}
+                      onClick={() => goToLesson(lessons[currentIndex - 1])}
+                      className="inline-flex items-center gap-2 rounded-lg bg-gray-100 px-3 py-2 text-sm font-bold text-gray-700 disabled:opacity-50"
+                    >
+                      <ChevronUp size={15} /> Previous lesson
+                    </button>
+                    <span className="text-sm font-semibold text-gray-500">
+                      {currentIndex + 1} of {lessons.length}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={currentIndex < 0 || currentIndex >= lessons.length - 1}
+                      onClick={() => goToLesson(lessons[currentIndex + 1])}
+                      className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-sm font-bold text-white disabled:opacity-50"
+                    >
+                      Next lesson <ChevronDown size={15} />
+                    </button>
+                  </div>
                 </div>
                 <div className="p-6">
                   <div className="space-y-6">
@@ -230,30 +282,9 @@ function TeacherCourseView({ courseId }) {
                             {block.activity_type.replace('_', ' ')}
                           </span>
                         </div>
-                        {block.payload && typeof block.payload === 'object' && (
-                          <div className="text-gray-600">
-                            {block.payload.richText && (
-                              <div dangerouslySetInnerHTML={{ __html: block.payload.richText }} />
-                            )}
-                            {block.payload.instructions && (
-                              <p>{block.payload.instructions}</p>
-                            )}
-                            {block.payload.questions && (
-                              <div className="space-y-2">
-                                {block.payload.questions.map((q, idx) => (
-                                  <div key={idx} className="bg-gray-50 p-3 rounded">
-                                    <p className="font-medium">{q.question}</p>
-                                    <div className="mt-2 space-y-1">
-                                      {q.options?.map((opt, oid) => (
-                                        <div key={oid} className="text-sm">{oid + 1}. {opt}</div>
-                                      ))}
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        )}
+                        <div className="text-gray-600">
+                          <TeacherBlockPreview block={block} />
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -277,19 +308,61 @@ function TeacherCourseView({ courseId }) {
               <h2 className="text-xl font-bold text-gray-900">Configure Certificate</h2>
               <button
                 onClick={() => setShowCertConfig(false)}
-                className="text-gray-400 hover:text-gray-600"
+                className="inline-flex items-center gap-2 rounded-lg bg-gray-100 px-3 py-2 text-sm font-bold text-gray-700 hover:bg-gray-200"
               >
-                <ChevronUp size={20} />
+                Close
               </button>
             </div>
             <div className="p-6">
-              <EditCourseCertification courseId={courseId} onClose={() => setShowCertConfig(false)} />
+              <EditCourseCertification courseId={courseId} courseName={course?.name} onClose={() => setShowCertConfig(false)} />
             </div>
           </div>
         </div>
       )}
     </div>
   );
+}
+
+function TeacherBlockPreview({ block }) {
+  const payload = block.payload || {};
+  const type = block.activity_type;
+  if (type === "rich_text" || type === "learn_content") {
+    return <div className="whitespace-pre-wrap" dangerouslySetInnerHTML={{ __html: payload.richText || payload.content || "No text yet." }} />;
+  }
+  if (type === "image_upload") {
+    const src = payload.imageUrl || payload.image_url;
+    return src ? <img className="max-h-72 w-full rounded-lg border border-gray-200 object-contain" src={String(src).startsWith("data:") ? src : assetUrl(src)} alt={payload.alt || ""} /> : <p>No image yet.</p>;
+  }
+  if (type === "code_explanation" || type === "runnable_code" || type === "practice_code" || type === "auto_marked_code") {
+    return (
+      <div className="space-y-2">
+        {payload.instructions || payload.explanation ? <div className="whitespace-pre-wrap" dangerouslySetInnerHTML={{ __html: payload.instructions || payload.explanation }} /> : null}
+        <pre className="overflow-auto rounded bg-gray-900 p-3 text-xs text-gray-100">{payload.code || payload.starterCode || payload.js || ""}</pre>
+      </div>
+    );
+  }
+  if (type === "quiz") {
+    return (
+      <div className="space-y-2">
+        {(payload.questions || []).map((q, idx) => (
+          <div key={idx} className="rounded bg-gray-50 p-3">
+            <p className="font-medium">{q.question}</p>
+            {(q.options || []).map((opt, oid) => <div key={oid} className="text-sm">{oid + 1}. {opt}</div>)}
+          </div>
+        ))}
+      </div>
+    );
+  }
+  if (type === "flashcards") {
+    return <div className="grid gap-2">{(payload.cards || []).map((card, index) => <div key={index} className="rounded bg-gray-50 p-3"><strong>{card.front}</strong><p>{card.back}</p></div>)}</div>;
+  }
+  if (type === "assignment_submission" || type === "submission") {
+    return <p className="whitespace-pre-wrap">{payload.instructions || "Assignment submission block."}</p>;
+  }
+  if (type === "mark_complete") {
+    return <p>{payload.title || "Mark lesson complete"} · {payload.xp || 20} XP</p>;
+  }
+  return <p>{type}</p>;
 }
 
 export default TeacherCourseView;

@@ -17,6 +17,7 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  Settings,
   Shield,
   Trash2,
   Upload,
@@ -25,6 +26,7 @@ import {
 import { api, assetUrl } from "../../lib/api";
 import { currentUser, logout } from "../../lib/auth";
 import CourseBuilderPanel from "./CourseBuilderPanel";
+import EditCourseCertification from "../courseBuilder/components/EditCourseCertification";
 
 const SIDEBAR_HIDE_DELAY_MS = 420;
 
@@ -39,6 +41,12 @@ const tabs = [
   { id: "leaderboards", label: "Leaderboards", icon: GraduationCap },
   { id: "audit", label: "Audit", icon: Shield }
 ];
+
+function actionLabel(status, idle, busy = "Saving...", done = "Saved") {
+  if (status === "saving") return busy;
+  if (status === "saved") return done;
+  return idle;
+}
 
 function EmptyState({ title, detail }) {
   return (
@@ -89,16 +97,26 @@ function DataTable({ columns, rows, emptyTitle, emptyDetail, wrapClassName }) {
   );
 }
 
+function CourseCoverThumb({ course }) {
+  const src = course.cover_image_url ? assetUrl(course.cover_image_url) : "";
+  return (
+    <div className="course-cover-thumb">
+      {src ? <img src={src} alt={`${course.name || "Course"} cover`} /> : <span>{(course.name || "C").charAt(0).toUpperCase()}</span>}
+    </div>
+  );
+}
+
 function CreateSchoolForm({ onCreated }) {
   const [name, setName] = useState("");
   const [contactEmail, setContactEmail] = useState("");
   const [clubs, setClubs] = useState("");
   const [logoFile, setLogoFile] = useState(null);
-  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState("idle");
 
   async function submit(event) {
     event.preventDefault();
-    setSaving(true);
+    setStatus("saving");
+    let saved = false;
     try {
       const school = await api.post("/schools", {
         name,
@@ -115,8 +133,11 @@ function CreateSchoolForm({ onCreated }) {
       setClubs("");
       setLogoFile(null);
       onCreated();
+      saved = true;
+      setStatus("saved");
+      window.setTimeout(() => setStatus("idle"), 1600);
     } finally {
-      setSaving(false);
+      if (!saved) setStatus("idle");
     }
   }
 
@@ -126,7 +147,7 @@ function CreateSchoolForm({ onCreated }) {
       <label>Contact email<input type="email" value={contactEmail} onChange={(e) => setContactEmail(e.target.value)} /></label>
       <label>Clubs<input value={clubs} onChange={(e) => setClubs(e.target.value)} placeholder="Computer, Chess" /></label>
       <label>Logo<input type="file" accept=".png,.jpg,.jpeg,.webp" onChange={(e) => setLogoFile(e.target.files?.[0] || null)} /></label>
-      <button type="submit" disabled={saving}><Plus size={16} />{saving ? "Saving" : "Add school"}</button>
+      <button type="submit" disabled={status === "saving"}><Plus size={16} />{actionLabel(status, "Add school", "Saving...", "Saved")}</button>
     </form>
   );
 }
@@ -139,23 +160,30 @@ function CreateTermForm({ academicYears, onCreated }) {
   const [endsOn, setEndsOn] = useState("");
   const [makeActive, setMakeActive] = useState(true);
   const [error, setError] = useState("");
+  const [yearStatus, setYearStatus] = useState("idle");
+  const [termStatus, setTermStatus] = useState("idle");
 
   async function createYear(event) {
     event.preventDefault();
     setError("");
+    setYearStatus("saving");
     try {
       const result = await api.post("/terms/academic-years", { year: Number(year) });
       setSelectedYear(String(result.year));
       setYear("");
       onCreated();
+      setYearStatus("saved");
+      window.setTimeout(() => setYearStatus("idle"), 1600);
     } catch (err) {
       setError(err.message);
+      setYearStatus("idle");
     }
   }
 
   async function createTerm(event) {
     event.preventDefault();
     setError("");
+    setTermStatus("saving");
     try {
       await api.post("/terms", {
         year: Number(selectedYear),
@@ -167,8 +195,11 @@ function CreateTermForm({ academicYears, onCreated }) {
       setStartsOn("");
       setEndsOn("");
       onCreated();
+      setTermStatus("saved");
+      window.setTimeout(() => setTermStatus("idle"), 1600);
     } catch (err) {
       setError(err.message);
+      setTermStatus("idle");
     }
   }
 
@@ -176,7 +207,7 @@ function CreateTermForm({ academicYears, onCreated }) {
     <div className="split-forms">
       <form className="inline-form" onSubmit={createYear}>
         <label>Academic year<input type="number" value={year} onChange={(e) => setYear(e.target.value)} required /></label>
-        <button type="submit"><Plus size={16} />Create year</button>
+        <button type="submit" disabled={yearStatus === "saving"}><Plus size={16} />{actionLabel(yearStatus, "Create year", "Creating...", "Created")}</button>
       </form>
       <form className="inline-form" onSubmit={createTerm}>
         <label>Year
@@ -190,9 +221,44 @@ function CreateTermForm({ academicYears, onCreated }) {
         <label>Ends<input type="date" value={endsOn} onChange={(e) => setEndsOn(e.target.value)} required /></label>
         <label className="check-row"><input type="checkbox" checked={makeActive} onChange={(e) => setMakeActive(e.target.checked)} />Make active for all schools</label>
         {error ? <p className="form-error">{error}</p> : null}
-        <button type="submit"><Plus size={16} />Create term</button>
+        <button type="submit" disabled={termStatus === "saving"}><Plus size={16} />{actionLabel(termStatus, "Create term", "Creating...", "Created")}</button>
       </form>
     </div>
+  );
+}
+
+function EditTermDatesForm({ term, onSaved, onCancel }) {
+  const [startsOn, setStartsOn] = useState(String(term.starts_on || "").slice(0, 10));
+  const [endsOn, setEndsOn] = useState(String(term.ends_on || "").slice(0, 10));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  async function submit(event) {
+    event.preventDefault();
+    setSaving(true);
+    setError("");
+    try {
+      await api.patch(`/terms/${term.id}`, { starts_on: startsOn, ends_on: endsOn });
+      await onSaved();
+      setSaving("saved");
+      window.setTimeout(() => setSaving(false), 1600);
+    } catch (err) {
+      setError(err.message);
+      setSaving(false);
+    } finally {
+      if (saving === true) setSaving(false);
+    }
+  }
+
+  return (
+    <form className="inline-form" onSubmit={submit}>
+      <label>Editing<input value={`${term.year} - ${term.name}`} disabled /></label>
+      <label>Starts<input type="date" value={startsOn} onChange={(e) => setStartsOn(e.target.value)} required /></label>
+      <label>Ends<input type="date" value={endsOn} onChange={(e) => setEndsOn(e.target.value)} required /></label>
+      <button type="submit" disabled={saving === true}><CalendarDays size={16} />{saving === true ? "Saving..." : saving === "saved" ? "Saved" : "Save dates"}</button>
+      <button type="button" className="secondary-button" onClick={onCancel}>Cancel</button>
+      {error ? <p className="form-error">{error}</p> : null}
+    </form>
   );
 }
 
@@ -200,14 +266,23 @@ function CreateCourseForm({ onCreated }) {
   const [name, setName] = useState("");
   const [club, setClub] = useState("");
   const [objectives, setObjectives] = useState("");
+  const [status, setStatus] = useState("idle");
 
   async function submit(event) {
     event.preventDefault();
-    await api.post("/courses", { name, club: club || null, objectives: objectives || null });
-    setName("");
-    setClub("");
-    setObjectives("");
-    onCreated();
+    setStatus("saving");
+    try {
+      await api.post("/courses", { name, club: club || null, objectives: objectives || null });
+      setName("");
+      setClub("");
+      setObjectives("");
+      onCreated();
+      setStatus("saved");
+      window.setTimeout(() => setStatus("idle"), 1600);
+    } catch (err) {
+      setStatus("idle");
+      throw err;
+    }
   }
 
   return (
@@ -215,19 +290,28 @@ function CreateCourseForm({ onCreated }) {
       <label>Course name<input value={name} onChange={(e) => setName(e.target.value)} required /></label>
       <label>Club<input value={club} onChange={(e) => setClub(e.target.value)} /></label>
       <label>Objectives<textarea value={objectives} onChange={(e) => setObjectives(e.target.value)} /></label>
-      <button type="submit"><Plus size={16} />Create course</button>
+      <button type="submit" disabled={status === "saving"}><Plus size={16} />{actionLabel(status, "Create course", "Creating...", "Created")}</button>
     </form>
   );
 }
 
 function CreateQuestionForm({ onCreated }) {
   const [form, setForm] = useState({ question: "", option_a: "", option_b: "", option_c: "", option_d: "", correct_option: "A" });
+  const [status, setStatus] = useState("idle");
 
   async function submit(event) {
     event.preventDefault();
-    await api.post("/quizzes/global-questions", form);
-    setForm({ question: "", option_a: "", option_b: "", option_c: "", option_d: "", correct_option: "A" });
-    onCreated();
+    setStatus("saving");
+    try {
+      await api.post("/quizzes/global-questions", form);
+      setForm({ question: "", option_a: "", option_b: "", option_c: "", option_d: "", correct_option: "A" });
+      onCreated();
+      setStatus("saved");
+      window.setTimeout(() => setStatus("idle"), 1600);
+    } catch (err) {
+      setStatus("idle");
+      throw err;
+    }
   }
 
   function update(key, value) {
@@ -244,7 +328,7 @@ function CreateQuestionForm({ onCreated }) {
         <label>Option D<input value={form.option_d} onChange={(e) => update("option_d", e.target.value)} required /></label>
       </div>
       <label>Correct option<select value={form.correct_option} onChange={(e) => update("correct_option", e.target.value)}><option>A</option><option>B</option><option>C</option><option>D</option></select></label>
-      <button type="submit"><Plus size={16} />Add question</button>
+      <button type="submit" disabled={status === "saving"}><Plus size={16} />{actionLabel(status, "Add question", "Adding...", "Added")}</button>
     </form>
   );
 }
@@ -269,10 +353,12 @@ function GradeChecks({ value, onChange }) {
 function GlobalQuizForm({ onCreated }) {
   const [form, setForm] = useState({ title: "", description: "", grade_levels: [1], max_attempts: 1, time_limit_seconds: "" });
   const [error, setError] = useState("");
+  const [status, setStatus] = useState("idle");
 
   async function submit(event) {
     event.preventDefault();
     setError("");
+    setStatus("saving");
     try {
       await api.post("/quizzes/global", {
         ...form,
@@ -281,8 +367,11 @@ function GlobalQuizForm({ onCreated }) {
       });
       setForm({ title: "", description: "", grade_levels: [1], max_attempts: 1, time_limit_seconds: "" });
       onCreated();
+      setStatus("saved");
+      window.setTimeout(() => setStatus("idle"), 1600);
     } catch (err) {
       setError(err.message);
+      setStatus("idle");
     }
   }
 
@@ -294,7 +383,7 @@ function GlobalQuizForm({ onCreated }) {
       <label>Time limit seconds<input type="number" min="30" value={form.time_limit_seconds} onChange={(e) => setForm({ ...form, time_limit_seconds: e.target.value })} /></label>
       <GradeChecks value={form.grade_levels} onChange={(grades) => setForm({ ...form, grade_levels: grades })} />
       {error ? <p className="form-error">{error}</p> : null}
-      <button type="submit"><Plus size={16} />Create global quiz</button>
+      <button type="submit" disabled={status === "saving"}><Plus size={16} />{actionLabel(status, "Create global quiz", "Creating...", "Created")}</button>
     </form>
   );
 }
@@ -305,6 +394,7 @@ function GlobalQuizManager({ quizzes, onChanged }) {
   const [file, setFile] = useState(null);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const [action, setAction] = useState("");
 
   async function openQuiz(id) {
     setError("");
@@ -315,25 +405,37 @@ function GlobalQuizManager({ quizzes, onChanged }) {
   async function saveQuiz(event) {
     event.preventDefault();
     setError("");
+    setAction("save");
     try {
       await api.patch(`/quizzes/global/${selectedQuiz.id}`, selectedQuiz);
       setMessage("Quiz updated.");
       onChanged();
     } catch (err) {
       setError(err.message);
+    } finally {
+      setAction("");
     }
   }
 
   async function deleteQuiz(id) {
     if (!window.confirm("Delete this global quiz? Existing attempts remain in reports, but the quiz will no longer be assignable.")) return;
-    await api.delete(`/quizzes/global/${id}`);
-    if (selectedQuiz?.id === id) setSelectedQuiz(null);
-    onChanged();
+    setAction(`delete-${id}`);
+    try {
+      await api.delete(`/quizzes/global/${id}`);
+      if (selectedQuiz?.id === id) setSelectedQuiz(null);
+      setMessage("Quiz deleted.");
+      onChanged();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setAction("");
+    }
   }
 
   async function addQuestion(event) {
     event.preventDefault();
     setError("");
+    setAction("question");
     try {
       await api.post(`/quizzes/global/${selectedQuiz.id}/questions`, question);
       setQuestion({ question: "", option_a: "", option_b: "", option_c: "", option_d: "", correct_option: "A" });
@@ -341,12 +443,15 @@ function GlobalQuizManager({ quizzes, onChanged }) {
       onChanged();
     } catch (err) {
       setError(err.message);
+    } finally {
+      setAction("");
     }
   }
 
   async function uploadQuestions(event) {
     event.preventDefault();
     setError("");
+    setAction("upload");
     const formData = new FormData();
     formData.append("file", file);
     try {
@@ -357,6 +462,8 @@ function GlobalQuizManager({ quizzes, onChanged }) {
       onChanged();
     } catch (err) {
       setError(err.message);
+    } finally {
+      setAction("");
     }
   }
 
@@ -368,7 +475,7 @@ function GlobalQuizManager({ quizzes, onChanged }) {
           { key: "title", label: "Quiz", render: (row) => <button type="button" className="link-button" onClick={() => openQuiz(row.id)}>{row.title}</button> },
           { key: "grade_levels", label: "Grades", render: (row) => row.grade_levels?.join(", ") || "-" },
           { key: "question_count", label: "Questions" },
-          { key: "actions", label: "Actions", render: (row) => <button type="button" className="danger-button compact-action" onClick={() => deleteQuiz(row.id)}><Trash2 size={14} /></button> }
+          { key: "actions", label: "Actions", render: (row) => <button type="button" className="danger-button compact-action" disabled={action === `delete-${row.id}`} onClick={() => deleteQuiz(row.id)}>{action === `delete-${row.id}` ? "Deleting..." : <Trash2 size={14} />}</button> }
         ]} />
       </section>
       {selectedQuiz ? (
@@ -381,7 +488,7 @@ function GlobalQuizManager({ quizzes, onChanged }) {
             <label>Description<textarea value={selectedQuiz.description || ""} onChange={(e) => setSelectedQuiz({ ...selectedQuiz, description: e.target.value })} /></label>
             <GradeChecks value={selectedQuiz.grade_levels || []} onChange={(grades) => setSelectedQuiz({ ...selectedQuiz, grade_levels: grades })} />
             <label>Max attempts<input type="number" min="1" max="20" value={selectedQuiz.max_attempts || 1} onChange={(e) => setSelectedQuiz({ ...selectedQuiz, max_attempts: Number(e.target.value) })} /></label>
-            <button type="submit"><Pencil size={16} />Save quiz</button>
+            <button type="submit" disabled={action === "save"}><Pencil size={16} />{action === "save" ? "Saving..." : "Save quiz"}</button>
           </form>
           <form className="question-form" onSubmit={addQuestion}>
             <label>Question<textarea value={question.question} onChange={(e) => setQuestion({ ...question, question: e.target.value })} required /></label>
@@ -389,11 +496,11 @@ function GlobalQuizManager({ quizzes, onChanged }) {
               {["option_a", "option_b", "option_c", "option_d"].map((key) => <label key={key}>{key.replace("_", " ").toUpperCase()}<input value={question[key]} onChange={(e) => setQuestion({ ...question, [key]: e.target.value })} required /></label>)}
             </div>
             <label>Correct option<select value={question.correct_option} onChange={(e) => setQuestion({ ...question, correct_option: e.target.value })}><option>A</option><option>B</option><option>C</option><option>D</option></select></label>
-            <button type="submit"><Plus size={16} />Add question</button>
+            <button type="submit" disabled={action === "question"}><Plus size={16} />{action === "question" ? "Adding..." : "Add question"}</button>
           </form>
           <form className="inline-form" onSubmit={uploadQuestions}>
             <label>Bulk questions CSV/XLSX<input type="file" accept=".csv,.xlsx" onChange={(e) => setFile(e.target.files?.[0] || null)} required /></label>
-            <button type="submit"><Upload size={16} />Upload questions</button>
+            <button type="submit" disabled={action === "upload"}><Upload size={16} />{action === "upload" ? "Uploading..." : "Upload questions"}</button>
             <p className="helper-text">Columns: question, option_a, option_b, option_c, option_d, correct_option.</p>
           </form>
           <DataTable rows={selectedQuiz.questions} emptyTitle="No questions yet" columns={[
@@ -409,10 +516,12 @@ function GlobalQuizManager({ quizzes, onChanged }) {
 function GlobalTypingForm({ tests, onChanged }) {
   const [form, setForm] = useState({ title: "", passage: "", duration_seconds: 300, max_attempts: 3, grade_levels: [1] });
   const [error, setError] = useState("");
+  const [status, setStatus] = useState("idle");
 
   async function submit(event) {
     event.preventDefault();
     setError("");
+    setStatus("saving");
     try {
       await api.post("/typing/global", {
         ...form,
@@ -420,8 +529,11 @@ function GlobalTypingForm({ tests, onChanged }) {
       });
       setForm({ title: "", passage: "", duration_seconds: 300, max_attempts: 3, grade_levels: [1] });
       onChanged();
+      setStatus("saved");
+      window.setTimeout(() => setStatus("idle"), 1600);
     } catch (err) {
       setError(err.message);
+      setStatus("idle");
     }
   }
 
@@ -435,7 +547,7 @@ function GlobalTypingForm({ tests, onChanged }) {
         <label>Attempts allowed<input type="number" min="1" max="20" value={form.max_attempts} onChange={(e) => setForm({ ...form, max_attempts: e.target.value })} /></label>
         <GradeChecks value={form.grade_levels} onChange={(grades) => setForm({ ...form, grade_levels: grades })} />
         {error ? <p className="form-error">{error}</p> : null}
-        <button type="submit"><Plus size={16} />Create global typing test</button>
+        <button type="submit" disabled={status === "saving"}><Plus size={16} />{actionLabel(status, "Create global typing test", "Creating...", "Created")}</button>
       </form>
       <DataTable rows={tests} emptyTitle="No global typing tests yet" columns={[
         { key: "title", label: "Test" },
@@ -451,6 +563,7 @@ function GlobalTypingForm({ tests, onChanged }) {
 function CreateSchoolAdminForm({ schools, onCreated }) {
   const [form, setForm] = useState({ full_name: "", email: "", password: "", school_id: "" });
   const [error, setError] = useState("");
+  const [status, setStatus] = useState("idle");
 
   function update(key, value) {
     setForm((current) => ({ ...current, [key]: value }));
@@ -459,12 +572,16 @@ function CreateSchoolAdminForm({ schools, onCreated }) {
   async function submit(event) {
     event.preventDefault();
     setError("");
+    setStatus("saving");
     try {
       await api.post("/users/school-admins", form);
       setForm({ full_name: "", email: "", password: "", school_id: "" });
       onCreated();
+      setStatus("saved");
+      window.setTimeout(() => setStatus("idle"), 1600);
     } catch (err) {
       setError(err.message);
+      setStatus("idle");
     }
   }
 
@@ -475,7 +592,7 @@ function CreateSchoolAdminForm({ schools, onCreated }) {
       <label>Temporary password<input type="password" value={form.password} onChange={(e) => update("password", e.target.value)} required /></label>
       <label>School<select value={form.school_id} onChange={(e) => update("school_id", e.target.value)} required><option value="">Select school</option>{schools.map((school) => <option key={school.id} value={school.id}>{school.name}</option>)}</select></label>
       {error ? <p className="form-error">{error}</p> : null}
-      <button type="submit"><Plus size={16} />Add School Admin</button>
+      <button type="submit" disabled={status === "saving"}><Plus size={16} />{actionLabel(status, "Add School Admin", "Saving...", "Added")}</button>
     </form>
   );
 }
@@ -864,7 +981,9 @@ export default function SystemAdminDashboard() {
   const [loading, setLoading] = useState(true);
   const [selectedSchool, setSelectedSchool] = useState(null);
   const [schoolDetail, setSchoolDetail] = useState(null);
+  const [editingTerm, setEditingTerm] = useState(null);
   const [coursesNavOpen, setCoursesNavOpen] = useState(false);
+  const [certificateCourse, setCertificateCourse] = useState(null);
 
   const metricCards = useMemo(() => {
     const totals = data.summary?.totals || {};
@@ -938,6 +1057,38 @@ export default function SystemAdminDashboard() {
     }
   }
 
+  const systemRefreshers = {
+    summary: async () => api.get("/analytics/system-admin/summary"),
+    schools: async () => (await api.get("/schools"))?.data || [],
+    academicYears: async () => api.get("/terms/academic-years"),
+    terms: async () => (await api.get("/terms"))?.data || [],
+    users: async () => (await api.get("/users"))?.data || [],
+    courses: async () => (await api.get("/courses"))?.data || [],
+    globalQuizzes: async () => (await api.get("/quizzes/global"))?.data || [],
+    questions: async () => (await api.get("/quizzes/global-questions"))?.data || [],
+    globalTypingTests: async () => (await api.get("/typing/global"))?.data || [],
+    leaderboards: async () => (await api.get("/leaderboards"))?.data || [],
+    audit: async () => (await api.get("/analytics/audit-logs?pageSize=30"))?.data || [],
+    performance: async () => api.get("/analytics/system-admin/school-performance")
+  };
+
+  async function refreshDashboardSlices(sliceNames) {
+    const uniqueSlices = [...new Set(sliceNames)];
+    try {
+      const entries = await Promise.all(uniqueSlices.map(async (slice) => [slice, await systemRefreshers[slice]()]));
+      setData((current) => ({ ...current, ...Object.fromEntries(entries) }));
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  const refreshCourses = () => refreshDashboardSlices(["courses", "summary"]);
+  const refreshTerms = () => refreshDashboardSlices(["terms", "academicYears"]);
+  const refreshSchools = () => refreshDashboardSlices(["schools", "summary", "performance"]);
+  const refreshUsers = () => refreshDashboardSlices(["users", "summary"]);
+  const refreshGlobalQuizzes = () => refreshDashboardSlices(["globalQuizzes", "questions"]);
+  const refreshTypingSetup = () => refreshDashboardSlices(["globalTypingTests"]);
+
   async function openSchool(schoolId) {
     setSelectedSchool(schoolId);
     setError("");
@@ -950,7 +1101,7 @@ export default function SystemAdminDashboard() {
   }
 
   async function refreshSchoolDetail(schoolId) {
-    await loadDashboard();
+    await refreshSchools();
     if (schoolId) {
       const detail = await api.get(`/schools/${schoolId}`);
       setSchoolDetail(detail);
@@ -1083,7 +1234,10 @@ export default function SystemAdminDashboard() {
             <h1>Good learning needs good visibility.</h1>
             <p className="header-copy">Manage schools, terms, courses, question pools, reports, and performance from one calm control room.</p>
           </div>
-          <div className="user-pill">{user?.full_name || "System Admin"}</div>
+          <div className="flex items-center gap-2">
+            <button type="button" className="compact-action" onClick={loadDashboard}><RefreshCw size={14} />Refresh</button>
+            <div className="user-pill">{user?.full_name || "System Admin"}</div>
+          </div>
         </header>
 
         {error ? <div className="alert">{error}</div> : null}
@@ -1114,13 +1268,15 @@ export default function SystemAdminDashboard() {
         {!loading && activeTab === "calendar" && (
           <section className="panel">
             <h2>Academic Calendar Management</h2>
-            <CreateTermForm academicYears={data.academicYears} onCreated={loadDashboard} />
+            <CreateTermForm academicYears={data.academicYears} onCreated={refreshTerms} />
+            {editingTerm ? <EditTermDatesForm term={editingTerm} onSaved={async () => { await refreshDashboardSlices(["terms", "performance"]); setEditingTerm(null); }} onCancel={() => setEditingTerm(null)} /> : null}
             <DataTable rows={data.terms} emptyTitle="No academic terms yet" columns={[
               { key: "name", label: "Term" },
               { key: "year", label: "Year" },
               { key: "starts_on", label: "Starts" },
               { key: "ends_on", label: "Ends" },
-              { key: "is_global_active", label: "Global active", render: (row) => row.is_global_active ? "Yes" : <button type="button" className="compact-action" onClick={async () => { await api.patch(`/terms/${row.id}/global-active`, {}); loadDashboard(); }}>Activate</button> }
+              { key: "edit", label: "Edit", render: (row) => <button type="button" className="compact-action" onClick={() => setEditingTerm(row)}><Pencil size={13} />Dates</button> },
+              { key: "is_global_active", label: "Global active", render: (row) => row.is_global_active ? "Yes" : <button type="button" className="compact-action" onClick={async () => { await api.patch(`/terms/${row.id}/global-active`, {}); refreshDashboardSlices(["terms", "performance"]); }}>Activate</button> }
             ]} />
           </section>
         )}
@@ -1128,7 +1284,7 @@ export default function SystemAdminDashboard() {
         {!loading && activeTab === "schools" && (
           <section className="panel">
             <h2>School Management</h2>
-            <CreateSchoolForm onCreated={loadDashboard} />
+            <CreateSchoolForm onCreated={refreshSchools} />
             <DataTable rows={data.schools} emptyTitle="No schools yet" columns={[
               { key: "name", label: "School", render: (row) => <a className="school-name-link" href={`/admin?school=${row.id}`} target="_blank" rel="noreferrer">{row.name} <ExternalLink size={13} /></a> },
               { key: "contact_email", label: "Contact", render: (row) => row.contact_email || "-" },
@@ -1144,34 +1300,40 @@ export default function SystemAdminDashboard() {
         {!loading && activeTab === "users" && (
           <section className="panel">
             <h2>User Management</h2>
-            <CreateSchoolAdminForm schools={data.schools} onCreated={loadDashboard} />
-            <UserManagementPanel users={data.users} schools={data.schools} onChanged={loadDashboard} />
+            <CreateSchoolAdminForm schools={data.schools} onCreated={refreshUsers} />
+            <UserManagementPanel users={data.users} schools={data.schools} onChanged={refreshUsers} />
           </section>
         )}
 
         {!loading && activeTab === "courses" && (
           <section className="panel">
             <h2>Course Publishing Controls</h2>
-            <CreateCourseForm onCreated={loadDashboard} />
+            <CreateCourseForm onCreated={refreshCourses} />
             <DataTable rows={data.courses} emptyTitle="No courses yet" columns={[
-              { key: "name", label: "Course" },
+              { key: "cover", label: "Cover", render: (row) => <CourseCoverThumb course={row} /> },
+              { key: "name", label: "Course", render: (row) => <button type="button" className="link-button" onClick={() => setActiveTab(`course:${row.id}`)}>{row.name}</button> },
               { key: "club", label: "Club" },
               { key: "is_published", label: "Published", render: (row) => row.is_published ? "Yes" : "No" },
-              { key: "published_at", label: "Published at", render: (row) => row.published_at || "-" }
+              { key: "published_at", label: "Published at", render: (row) => row.published_at || "-" },
+              { key: "certificate", label: "Certificate", render: (row) => <button type="button" className="compact-action" onClick={() => setCertificateCourse(row)}><Settings size={13} />Configure</button> },
+              { key: "content", label: "Content", render: (row) => <button type="button" onClick={() => window.location.assign(`/school-admin/course/${row.id}/preview`)}>Preview</button> }
             ]} />
           </section>
         )}
 
         {!loading && activeCourse && (
           <section className="panel">
-            <h2>{activeCourse.name}</h2>
+            <div className="school-title-line">
+              <h2>{activeCourse.name}</h2>
+              <button type="button" className="compact-action" onClick={() => setCertificateCourse(activeCourse)}><Settings size={14} />Configure certificate</button>
+            </div>
             {activeCourse.name === "Web development" ? (
               <div className="module-card-grid">
                 {(activeCourse.modules || []).map((module) => (
-                  <article className="module-card" key={module.id}>
+                  <article className="module-card module-card-button" key={module.id} role="button" tabIndex={0} onClick={() => window.location.assign(`/school-admin/course/${activeCourse.id}/preview`)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") window.location.assign(`/school-admin/course/${activeCourse.id}/preview`); }}>
                     <span>Module {module.sort_order}</span>
                     <h3>{module.name}</h3>
-                    <p>{module.objectives}</p>
+                    <p style={{ whiteSpace: "pre-wrap" }}>{module.objectives}</p>
                     <strong>{module.badge_name} · {module.xp_points} XP</strong>
                   </article>
                 ))}
@@ -1180,14 +1342,27 @@ export default function SystemAdminDashboard() {
           </section>
         )}
 
+        {certificateCourse ? (
+          <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-6">
+            <div className="max-h-[92vh] w-full max-w-6xl overflow-y-auto rounded-xl bg-white shadow-2xl">
+              <EditCourseCertification
+                courseId={certificateCourse.id}
+                courseName={certificateCourse.name}
+                onClose={() => setCertificateCourse(null)}
+                onSave={refreshCourses}
+              />
+            </div>
+          </div>
+        ) : null}
+
         {!loading && activeTab === "quiz" && (
           <section className="dashboard-section">
             <section className="panel">
               <h2>Global Quiz Pool</h2>
-              <GlobalQuizForm onCreated={loadDashboard} />
-              <GlobalQuizManager quizzes={data.globalQuizzes} onChanged={loadDashboard} />
+              <GlobalQuizForm onCreated={refreshGlobalQuizzes} />
+              <GlobalQuizManager quizzes={data.globalQuizzes} onChanged={refreshGlobalQuizzes} />
             </section>
-            <GlobalTypingForm tests={data.globalTypingTests} onChanged={loadDashboard} />
+            <GlobalTypingForm tests={data.globalTypingTests} onChanged={refreshTypingSetup} />
           </section>
         )}
 
@@ -1211,7 +1386,7 @@ export default function SystemAdminDashboard() {
                 Pick a seeded catalogue course, then shape modules, lessons, and reusable activity blocks. Aim for 100 marks per lesson across activities.
                 Grading bands: 0–50 approaching expectations, 51–80 meets expectations, 81–100 exceeds expectations.
               </p>
-              <CourseBuilderPanel courses={data.courses} onPublished={loadDashboard} />
+              <CourseBuilderPanel courses={data.courses} onPublished={refreshCourses} />
             </section>
           </section>
         )}

@@ -16,6 +16,7 @@ function wrap(handler) {
 const profile = wrap(async (req, res) => res.json(await service.profile(req.user)));
 const activeTerm = wrap(async (req, res) => res.json(await service.activeTerm(req.user)));
 const terms = wrap(async (req, res) => res.json(await service.terms(req.user)));
+const termWeeks = wrap(async (req, res) => res.json(await service.termWeeks(req.user, req.params.id || req.query.term_id || null)));
 const dashboardSummary = wrap(async (req, res) => res.json(await service.dashboardSummary(req.user, req.query)));
 const enrolmentByCourse = wrap(async (req, res) => res.json(await service.enrolmentByCourse(req.user, req.query)));
 const classProgress = wrap(async (req, res) => res.json(await service.classProgress(req.user, req.query)));
@@ -205,6 +206,7 @@ const streams = wrap(async (req, res) => res.json(await service.streams(req.user
 const addStream = wrap(async (req, res) => res.status(201).json(await service.addStream(req.user, req.body)));
 const deleteStream = wrap(async (req, res) => res.json(await service.deleteStream(req.user, req.params.id)));
 const availableCourses = wrap(async (req, res) => res.json(await service.availableCourses(req.user)));
+const courseCertificateLearners = wrap(async (req, res) => res.json(await service.courseCertificateLearners(req.user, req.params.courseId, req.query)));
 const bulkAllocateCourse = wrap(async (req, res) => res.json(await service.bulkAllocateCourse(req.user, req.body)));
 const deallocateCourse = wrap(async (req, res) => res.json(await service.deallocateCourse(req.user, req.params.courseId, req.body)));
 
@@ -212,6 +214,7 @@ module.exports = {
   profile,
   activeTerm,
   terms,
+  termWeeks,
   dashboardSummary,
   enrolmentByCourse,
   classProgress,
@@ -248,6 +251,7 @@ module.exports = {
   addStream,
   deleteStream,
   availableCourses,
+  courseCertificateLearners,
   bulkAllocateCourse,
   deallocateCourse
 };

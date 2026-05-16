@@ -36,6 +36,8 @@ import {
 
   Plus,
 
+  RefreshCw,
+
   Settings,
 
   Sparkles,
@@ -53,6 +55,7 @@ import { currentUser, logout } from "../../lib/auth";
 import ReportCard from "./ReportCard";
 
 import ReportsPanel from "./ReportsPanel";
+import { CertificatePreview, DEFAULT_CERTIFICATE_CONFIG, DEFAULT_SYSTEM_LOGO_URL } from "../courseBuilder/components/EditCourseCertification";
 
 
 
@@ -79,6 +82,20 @@ const tabs = [
   { id: "preferences", label: "Preferences", icon: Settings }
 
 ];
+
+const FEEDBACK_TEMPLATES = [
+  "Great effort. Your work shows you understood the task. Next time, add a little more explanation so your thinking is easy to follow.",
+  "Good start. Please review the instructions and resubmit with the missing parts included.",
+  "Well done. Your answer is correct and clearly presented. Keep this standard in the next lesson.",
+  "You are close. Fix the highlighted issue, test your work again, and resubmit.",
+  "Excellent creativity. I like how you tried your own idea while still meeting the lesson goal."
+];
+
+function actionLabel(status, idle, busy = "Saving...", done = "Saved") {
+  if (status === "saving") return busy;
+  if (status === "saved") return done;
+  return idle;
+}
 
 
 
@@ -265,6 +282,7 @@ function AddLearnerForm({ streams, onCreated }) {
   });
 
   const [error, setError] = useState("");
+  const [status, setStatus] = useState("idle");
 
 
 
@@ -281,6 +299,7 @@ function AddLearnerForm({ streams, onCreated }) {
     event.preventDefault();
 
     setError("");
+    setStatus("saving");
 
     try {
 
@@ -289,10 +308,13 @@ function AddLearnerForm({ streams, onCreated }) {
       setForm({ full_name: "", grade: "", stream: "", temporary_password: "Password", parent_name: "", parent_email: "", parent_phone: "" });
 
       onCreated();
+      setStatus("saved");
+      window.setTimeout(() => setStatus("idle"), 1600);
 
     } catch (err) {
 
       setError(err.message);
+      setStatus("idle");
 
     }
 
@@ -320,7 +342,7 @@ function AddLearnerForm({ streams, onCreated }) {
 
       {error ? <p className="form-error">{error}</p> : null}
 
-      <button type="submit"><Plus size={16} />Add learner</button>
+      <button type="submit" disabled={status === "saving"}><Plus size={16} />{actionLabel(status, "Add learner", "Saving...", "Added")}</button>
 
     </form>
 
@@ -337,6 +359,7 @@ function BulkLearnerUpload({ onUploaded }) {
   const [result, setResult] = useState(null);
 
   const [error, setError] = useState("");
+  const [status, setStatus] = useState("idle");
 
 
 
@@ -347,6 +370,7 @@ function BulkLearnerUpload({ onUploaded }) {
     setError("");
 
     setResult(null);
+    setStatus("saving");
 
     try {
 
@@ -359,10 +383,13 @@ function BulkLearnerUpload({ onUploaded }) {
       setResult(uploadResult);
 
       onUploaded();
+      setStatus("saved");
+      window.setTimeout(() => setStatus("idle"), 1600);
 
     } catch (err) {
 
       setError(err.message);
+      setStatus("idle");
 
     }
 
@@ -384,7 +411,7 @@ function BulkLearnerUpload({ onUploaded }) {
 
       <input type="file" accept=".xlsx,.csv" onChange={(e) => setFile(e.target.files?.[0] || null)} required />
 
-      <button type="submit"><Upload size={16} />Upload learners</button>
+      <button type="submit" disabled={status === "saving"}><Upload size={16} />{actionLabel(status, "Upload learners", "Uploading...", "Uploaded")}</button>
 
       {error ? <p className="form-error">{error}</p> : null}
 
@@ -412,17 +439,18 @@ function BulkLearnerUpload({ onUploaded }) {
 
 
 
-function CourseAllocationPanel({ learners, courses, onAllocated }) {
+function CourseAllocationPanel({ learners, courses, termWeeks, onAllocated }) {
 
   const [courseId, setCourseId] = useState("");
 
   const [selectedLearners, setSelectedLearners] = useState([]);
 
-  const [moduleAvailability, setModuleAvailability] = useState({});
+  const [moduleWeeks, setModuleWeeks] = useState({});
 
   const [message, setMessage] = useState("");
 
   const [error, setError] = useState("");
+  const [status, setStatus] = useState("idle");
 
   const selectedCourse = courses.find((course) => course.id === courseId);
 
@@ -443,10 +471,11 @@ function CourseAllocationPanel({ learners, courses, onAllocated }) {
     setError("");
 
     setMessage("");
+    setStatus("saving");
 
     try {
 
-      const result = await api.post("/school-admin/course-allocations", { course_id: courseId, learner_ids: selectedLearners, module_availability: moduleAvailability });
+      const result = await api.post("/school-admin/course-allocations", { course_id: courseId, learner_ids: selectedLearners, module_weeks: moduleWeeks });
 
       setMessage(`${result.count} learner allocations saved.`);
 
@@ -454,13 +483,16 @@ function CourseAllocationPanel({ learners, courses, onAllocated }) {
 
       setCourseId("");
 
-      setModuleAvailability({});
+      setModuleWeeks({});
 
       onAllocated();
+      setStatus("saved");
+      window.setTimeout(() => setStatus("idle"), 1600);
 
     } catch (err) {
 
       setError(err.message);
+      setStatus("idle");
 
     }
 
@@ -476,17 +508,27 @@ function CourseAllocationPanel({ learners, courses, onAllocated }) {
 
       <form className="allocation-form" onSubmit={allocate}>
 
-        <label>Course<select value={courseId} onChange={(e) => { setCourseId(e.target.value); setModuleAvailability({}); }} required><option value="">Select course</option>{courses.map((course) => <option key={course.id} value={course.id}>{course.name}</option>)}</select></label>
+        <label>Course<select value={courseId} onChange={(e) => { setCourseId(e.target.value); setModuleWeeks({}); }} required><option value="">Select course</option>{courses.map((course) => <option key={course.id} value={course.id}>{course.name}</option>)}</select></label>
+
+        {selectedCourse?.cover_image_url ? (
+          <img className="school-course-cover-hero allocation-cover" src={assetUrl(selectedCourse.cover_image_url)} alt={`${selectedCourse.name} cover`} />
+        ) : null}
 
         {selectedCourse?.modules?.length ? (
 
           <div className="module-availability-grid">
 
-            <p className="helper-text">Module dates are lock dates. Leave blank to open a module immediately; choose a date/time to keep that module closed until then.</p>
+            <p className="helper-text">Choose the week each module opens. Leave blank to open a module immediately.</p>
 
             {selectedCourse.modules.map((module) => (
 
-              <label key={module.id}>Closed until: Module {module.sort_order} - {module.name}<input type="datetime-local" value={moduleAvailability[module.id] || ""} onChange={(e) => setModuleAvailability({ ...moduleAvailability, [module.id]: e.target.value })} /></label>
+              <WeekSelect
+                key={module.id}
+                label={`Open Module ${module.sort_order} - ${module.name}`}
+                value={moduleWeeks[module.id] || ""}
+                weeks={termWeeks}
+                onChange={(weekNumber) => setModuleWeeks({ ...moduleWeeks, [module.id]: weekNumber })}
+              />
 
             ))}
 
@@ -510,7 +552,7 @@ function CourseAllocationPanel({ learners, courses, onAllocated }) {
 
         </div>
 
-        <button type="submit"><CheckCircle2 size={16} />Allocate selected learners</button>
+        <button type="submit" disabled={status === "saving"}><CheckCircle2 size={16} />{actionLabel(status, "Allocate selected learners", "Allocating...", "Allocated")}</button>
 
         {error ? <p className="form-error">{error}</p> : null}
 
@@ -560,6 +602,175 @@ function GradeChecks({ value, onChange, allowed }) {
 
 }
 
+function SubmissionReview({ row, onReviewed }) {
+  const [feedback, setFeedback] = useState(row.feedback || "");
+  const [open, setOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  async function save() {
+    setSaving(true);
+    try {
+      await api.patch(`/school-admin/submissions/${encodeURIComponent(row.id)}/review`, { feedback });
+      setOpen(false);
+      onReviewed?.();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="submission-review">
+      <button type="button" onClick={() => setOpen((value) => !value)}>{row.status === "reviewed" ? "Edit feedback" : "Review"}</button>
+      {open ? (
+        <div className="submission-review-panel">
+          <select defaultValue="" onChange={(event) => event.target.value && setFeedback(event.target.value)}>
+            <option value="">Feedback templates</option>
+            {FEEDBACK_TEMPLATES.map((template) => <option key={template} value={template}>{template.slice(0, 72)}...</option>)}
+          </select>
+          <textarea value={feedback} onChange={(event) => setFeedback(event.target.value)} placeholder="Write teacher feedback..." />
+          <button type="button" onClick={save} disabled={saving || !feedback.trim()}>{saving ? "Saving..." : "Save feedback"}</button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function certificateHtml(certificate, config) {
+  const safe = (value) => String(value || "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[char]));
+  const systemLogo = config.systemLogoUrl || config.primaryLogoUrl || DEFAULT_SYSTEM_LOGO_URL;
+  const schoolLogo = config.schoolLogoUrl || config.secondaryLogoUrl || "";
+  const logoTag = (src, alt, fallback) => src ? `<img src="${safe(assetUrl(src))}" alt="${safe(alt)}" />` : `<span>${safe(fallback)}</span>`;
+  return `
+    <section class="certificate ${safe(config.pattern || "modern")}">
+      <div class="logos">${config.includeLogos !== false ? `${logoTag(systemLogo, "EduClub logo", config.issuerName || "EduClub")}${logoTag(schoolLogo, "School logo", "School")}` : ""}</div>
+      <p class="issuer">${safe(config.issuerName || "EduClub")}</p>
+      <h1>${safe(config.certificateTitle || "Certificate of Completion")}</h1>
+      <p>This certifies that</p>
+      ${config.includeStudentName !== false ? `<h2>${safe(certificate.student_name)}</h2>` : ""}
+      <p>${safe(config.completionText || "has successfully completed")}</p>
+      ${config.includeCourseName !== false ? `<h3>${safe(certificate.course_name)}</h3>` : ""}
+      <footer>
+        ${config.includeInstructor !== false ? `<div><strong>${safe(certificate.instructor_name || config.instructorName || "Instructor")}</strong><span>${safe(config.signatureLabel || "Instructor")}</span></div>` : ""}
+        ${config.includeCompletionDate !== false ? `<div><strong>${new Date(certificate.completion_date).toLocaleDateString()}</strong><span>Date</span></div>` : ""}
+        ${config.includeCertificateId !== false ? `<div><strong>${safe(certificate.certification_uuid)}</strong><span>Certificate ID</span></div>` : ""}
+      </footer>
+    </section>`;
+}
+
+function downloadHtml(filename, body) {
+  const blob = new Blob([body], { type: "text/html" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+function CourseCertificatePanel({ course, schoolLogoUrl }) {
+  const [certification, setCertification] = useState(null);
+  const [learners, setLearners] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState("");
+
+  const config = { ...DEFAULT_CERTIFICATE_CONFIG, ...(certification?.config || {}), systemLogoUrl: (certification?.config?.systemLogoUrl || certification?.config?.primaryLogoUrl || DEFAULT_SYSTEM_LOGO_URL), schoolLogoUrl: schoolLogoUrl || certification?.config?.schoolLogoUrl || certification?.config?.secondaryLogoUrl || "" };
+  const readyLearners = learners.filter((learner) => learner.certificate_ready);
+
+  async function load() {
+    if (!course?.id) return;
+    setLoading(true);
+    setMessage("");
+    try {
+      const [certRows, learnerRows] = await Promise.all([
+        api.get(`/certifications/course/${course.id}`),
+        api.get(`/school-admin/courses/${course.id}/certificate-learners`)
+      ]);
+      const certs = certRows.data || [];
+      setCertification(certs.find((item) => item.config?.enabled) || certs[0] || null);
+      setLearners(learnerRows.learners || []);
+    } catch (err) {
+      setMessage(err.message || "Could not load certificate data.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    load();
+  }, [course?.id]);
+
+  async function downloadAllReady() {
+    setLoading(true);
+    setMessage("");
+    try {
+      const certificates = [];
+      for (const learner of readyLearners) {
+        try {
+          const cert = await api.get(`/certifications/generate/${course.id}/${learner.id}`);
+          certificates.push(cert);
+        } catch {}
+      }
+      if (!certificates.length) {
+        setMessage("No certificate-ready learners could be generated yet.");
+        return;
+      }
+      const html = `<!doctype html><html><head><meta charset="utf-8"><title>${course.name} certificates</title><style>
+        body{margin:0;background:#e5e7eb;font-family:Georgia,serif}.certificate{page-break-after:always;width:1000px;min-height:680px;margin:24px auto;padding:64px;text-align:center;background:#fff;border:8px double #2563eb;box-sizing:border-box;display:grid;align-content:center;gap:14px}.certificate.royal{border-color:#b8860b;background:#eff6ff}.certificate.tech{border-color:#22d3ee;background:#0f172a;color:#e5e7eb}.certificate.nature{border-color:#16a34a;background:#f0fdf4}.certificate.vintage{border-color:#92400e;background:#fef3c7}.certificate.academic{border-color:#7f1d1d;background:#fff7ed}.certificate.minimal{border-color:#cbd5e1}.logos{display:flex;justify-content:space-between;align-items:center;font-weight:800}.logos img,.logos span{width:86px;height:86px;object-fit:contain;border:1px solid #cbd5e1;border-radius:12px;background:rgba(255,255,255,.78);padding:8px;box-sizing:border-box;display:grid;place-items:center}.issuer{text-transform:uppercase;letter-spacing:.14em;font-weight:900}h1{font-size:46px;margin:0}h2{font-size:42px;margin:0}h3{font-size:30px;margin:0}footer{margin-top:42px;display:flex;justify-content:center;gap:36px}footer div{min-width:170px;border-top:1px solid currentColor;padding-top:8px;display:grid;gap:4px}footer span{font-size:12px;text-transform:uppercase}@media print{body{background:#fff}.certificate{margin:0;width:100%;min-height:100vh}}
+      </style></head><body>${certificates.map((cert) => certificateHtml(cert, { ...DEFAULT_CERTIFICATE_CONFIG, ...(cert.config || config) })).join("")}</body></html>`;
+      downloadHtml(`${course.name.replace(/\s+/g, "_")}_certificates.html`, html);
+      setMessage(`Prepared ${certificates.length} certificate${certificates.length === 1 ? "" : "s"}.`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <section className="panel certificate-panel">
+      <div className="school-title-line">
+        <h2>Certificates</h2>
+        <button type="button" className="compact-action" onClick={load}><RefreshCw size={14} />Refresh</button>
+        <button type="button" className="compact-action" onClick={downloadAllReady} disabled={!readyLearners.length || loading}><Download size={14} />Download all ready</button>
+      </div>
+      {message ? <div className="alert">{message}</div> : null}
+      {!certification ? <p className="helper-text">Certificate design is not configured by the system admin yet.</p> : null}
+      {certification ? <CertificatePreview config={config} courseName={course.name} /> : null}
+      <DataTable rows={learners} emptyTitle="No learners allocated to this course" columns={[
+        { key: "learner_name", label: "Learner" },
+        { key: "grade", label: "Grade" },
+        { key: "completion_percent", label: "Completion", render: (row) => `${row.completion_percent}%` },
+        { key: "certificate_ready", label: "Ready", render: (row) => row.certificate_ready ? "Yes" : "No" }
+      ]} />
+    </section>
+  );
+}
+
+function CourseCoverThumb({ course }) {
+  const src = course.cover_image_url ? assetUrl(course.cover_image_url) : "";
+  return (
+    <div className="school-course-cover-cell">
+      {src ? <img src={src} alt={`${course.name || "Course"} cover`} /> : <span>{(course.name || "C").charAt(0).toUpperCase()}</span>}
+    </div>
+  );
+}
+
+function WeekSelect({ value, weeks, onChange, label = "Available week", allowBlank = true, blankLabel = "Open immediately" }) {
+  return (
+    <label>
+      {label}
+      <select value={value || ""} onChange={(event) => onChange(event.target.value)}>
+        {allowBlank ? <option value="">{blankLabel}</option> : null}
+        {(weeks || []).map((week) => (
+          <option key={week.week_number} value={week.week_number}>
+            {week.label}: {formatDate(week.starts_on)} - {formatDate(week.ends_on)}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
 
 
 function CreateSchoolQuizForm({ onCreated }) {
@@ -575,6 +786,8 @@ function CreateSchoolQuizForm({ onCreated }) {
   const [error, setError] = useState("");
 
   const [message, setMessage] = useState("");
+  const [status, setStatus] = useState("idle");
+  const [action, setAction] = useState("");
 
 
 
@@ -583,6 +796,7 @@ function CreateSchoolQuizForm({ onCreated }) {
     event.preventDefault();
 
     setError("");
+    setAction("quiz");
 
     try {
 
@@ -593,10 +807,13 @@ function CreateSchoolQuizForm({ onCreated }) {
       setForm({ title: "", description: "", grade_levels: [1], max_attempts: 1 });
 
       onCreated();
+      setAction("quiz-saved");
+      window.setTimeout(() => setAction(""), 1600);
 
     } catch (err) {
 
       setError(err.message);
+      setAction("");
 
     }
 
@@ -609,6 +826,7 @@ function CreateSchoolQuizForm({ onCreated }) {
     event.preventDefault();
 
     setError("");
+    setAction("question");
 
     try {
 
@@ -617,10 +835,13 @@ function CreateSchoolQuizForm({ onCreated }) {
       setQuestion({ question: "", option_a: "", option_b: "", option_c: "", option_d: "", correct_option: "A" });
 
       onCreated();
+      setAction("question-saved");
+      window.setTimeout(() => setAction(""), 1600);
 
     } catch (err) {
 
       setError(err.message);
+      setAction("");
 
     }
 
@@ -635,6 +856,7 @@ function CreateSchoolQuizForm({ onCreated }) {
     setError("");
 
     setMessage("");
+    setAction("upload");
 
     const formData = new FormData();
 
@@ -649,10 +871,13 @@ function CreateSchoolQuizForm({ onCreated }) {
       setUploadFile(null);
 
       onCreated();
+      setAction("upload-saved");
+      window.setTimeout(() => setAction(""), 1600);
 
     } catch (err) {
 
       setError(err.message);
+      setAction("");
 
     }
 
@@ -678,7 +903,7 @@ function CreateSchoolQuizForm({ onCreated }) {
 
         {error ? <p className="form-error">{error}</p> : null}
 
-        <button type="submit"><Plus size={16} />Create quiz</button>
+        <button type="submit" disabled={action === "quiz"}><Plus size={16} />{action === "quiz" ? "Creating..." : action === "quiz-saved" ? "Created" : "Create quiz"}</button>
 
       </form>
 
@@ -702,7 +927,7 @@ function CreateSchoolQuizForm({ onCreated }) {
 
             <label>Correct option<select value={question.correct_option} onChange={(e) => setQuestion({ ...question, correct_option: e.target.value })}><option>A</option><option>B</option><option>C</option><option>D</option></select></label>
 
-            <button type="submit"><Plus size={16} />Add question</button>
+            <button type="submit" disabled={action === "question"}><Plus size={16} />{action === "question" ? "Adding..." : action === "question-saved" ? "Added" : "Add question"}</button>
 
           </form>
 
@@ -710,7 +935,7 @@ function CreateSchoolQuizForm({ onCreated }) {
 
             <label>Bulk questions CSV/XLSX<input type="file" accept=".csv,.xlsx" onChange={(e) => setUploadFile(e.target.files?.[0] || null)} required /></label>
 
-            <button type="submit"><Upload size={16} />Upload questions</button>
+            <button type="submit" disabled={action === "upload"}><Upload size={16} />{action === "upload" ? "Uploading..." : action === "upload-saved" ? "Uploaded" : "Upload questions"}</button>
 
             <p className="helper-text">Columns: question, option_a, option_b, option_c, option_d, correct_option.</p>
 
@@ -728,7 +953,7 @@ function CreateSchoolQuizForm({ onCreated }) {
 
 
 
-function QuizAssignmentPanel({ globalQuizzes, schoolQuizzes, assignments, performance, onRefresh }) {
+function QuizAssignmentPanel({ globalQuizzes, schoolQuizzes, assignments, performance, termWeeks, onRefresh }) {
 
   const [selectedQuizId, setSelectedQuizId] = useState("");
 
@@ -736,13 +961,12 @@ function QuizAssignmentPanel({ globalQuizzes, schoolQuizzes, assignments, perfor
 
   const [maxAttempts, setMaxAttempts] = useState(1);
 
-  const [availableFrom, setAvailableFrom] = useState("");
-
-  const [availableUntil, setAvailableUntil] = useState("");
+  const [weekNumber, setWeekNumber] = useState("");
 
   const [error, setError] = useState("");
 
   const [message, setMessage] = useState("");
+  const [status, setStatus] = useState("idle");
 
 
 
@@ -759,6 +983,7 @@ function QuizAssignmentPanel({ globalQuizzes, schoolQuizzes, assignments, perfor
     setError("");
 
     setMessage("");
+    setStatus("saving");
 
     try {
 
@@ -768,9 +993,7 @@ function QuizAssignmentPanel({ globalQuizzes, schoolQuizzes, assignments, perfor
 
         max_attempts: Number(maxAttempts || 1),
 
-        available_from: availableFrom || null,
-
-        available_until: availableUntil || null
+        week_number: weekNumber ? Number(weekNumber) : null
 
       });
 
@@ -780,15 +1003,16 @@ function QuizAssignmentPanel({ globalQuizzes, schoolQuizzes, assignments, perfor
 
       setSelectedQuizId("");
 
-      setAvailableFrom("");
-
-      setAvailableUntil("");
+      setWeekNumber("");
 
       onRefresh();
+      setStatus("saved");
+      window.setTimeout(() => setStatus("idle"), 1600);
 
     } catch (err) {
 
       setError(err.message);
+      setStatus("idle");
 
     }
 
@@ -814,15 +1038,13 @@ function QuizAssignmentPanel({ globalQuizzes, schoolQuizzes, assignments, perfor
 
           <label>Attempts allowed<input type="number" min="1" max="20" value={maxAttempts} onChange={(e) => setMaxAttempts(e.target.value)} /></label>
 
-          <label>Available from<input type="datetime-local" value={availableFrom} onChange={(e) => setAvailableFrom(e.target.value)} /></label>
-
-          <label>Available until<input type="datetime-local" value={availableUntil} onChange={(e) => setAvailableUntil(e.target.value)} /></label>
+          <WeekSelect value={weekNumber} weeks={termWeeks} onChange={setWeekNumber} label="Assign for week" blankLabel="No week limit" />
 
           {error ? <p className="form-error">{error}</p> : null}
 
           {message ? <p className="success-text">{message}</p> : null}
 
-          <button type="submit"><CheckCircle2 size={16} />Assign quiz</button>
+          <button type="submit" disabled={status === "saving"}><CheckCircle2 size={16} />{actionLabel(status, "Assign quiz", "Assigning...", "Assigned")}</button>
 
         </form>
 
@@ -874,7 +1096,7 @@ function QuizAssignmentPanel({ globalQuizzes, schoolQuizzes, assignments, perfor
 
 
 
-function TypingTestPanel({ globalTests, schoolTests, assignments, performance, onRefresh }) {
+function TypingTestPanel({ globalTests, schoolTests, assignments, performance, termWeeks, onRefresh }) {
 
   const [form, setForm] = useState({ title: "", passage: "", duration_seconds: 300, max_attempts: 3, grade_levels: [1] });
 
@@ -884,13 +1106,12 @@ function TypingTestPanel({ globalTests, schoolTests, assignments, performance, o
 
   const [grades, setGrades] = useState([]);
 
-  const [availableFrom, setAvailableFrom] = useState("");
-
-  const [availableUntil, setAvailableUntil] = useState("");
+  const [weekNumber, setWeekNumber] = useState("");
 
   const [error, setError] = useState("");
 
   const [message, setMessage] = useState("");
+  const [action, setAction] = useState("");
 
   const allTests = [...globalTests, ...schoolTests];
 
@@ -905,6 +1126,7 @@ function TypingTestPanel({ globalTests, schoolTests, assignments, performance, o
     setError("");
 
     setMessage("");
+    setAction("save");
 
     try {
 
@@ -933,10 +1155,13 @@ function TypingTestPanel({ globalTests, schoolTests, assignments, performance, o
       setMessage(editingTestId ? "Typing test updated." : "Typing test created.");
 
       onRefresh();
+      setAction("save-saved");
+      window.setTimeout(() => setAction(""), 1600);
 
     } catch (err) {
 
       setError(err.message);
+      setAction("");
 
     }
 
@@ -987,6 +1212,7 @@ function TypingTestPanel({ globalTests, schoolTests, assignments, performance, o
     setError("");
 
     setMessage("");
+    setAction("assign");
 
     try {
 
@@ -994,9 +1220,7 @@ function TypingTestPanel({ globalTests, schoolTests, assignments, performance, o
 
         grades,
 
-        available_from: availableFrom || null,
-
-        available_until: availableUntil || null
+        week_number: weekNumber ? Number(weekNumber) : null
 
       });
 
@@ -1006,15 +1230,16 @@ function TypingTestPanel({ globalTests, schoolTests, assignments, performance, o
 
       setSelectedTestId("");
 
-      setAvailableFrom("");
-
-      setAvailableUntil("");
+      setWeekNumber("");
 
       onRefresh();
+      setAction("assign-saved");
+      window.setTimeout(() => setAction(""), 1600);
 
     } catch (err) {
 
       setError(err.message);
+      setAction("");
 
     }
 
@@ -1042,7 +1267,7 @@ function TypingTestPanel({ globalTests, schoolTests, assignments, performance, o
 
           <GradeChecks value={form.grade_levels} onChange={(gradeLevels) => setForm({ ...form, grade_levels: gradeLevels })} />
 
-          <button type="submit"><Plus size={16} />{editingTestId ? "Save typing test" : "Create typing test"}</button>
+          <button type="submit" disabled={action === "save"}><Plus size={16} />{action === "save" ? "Saving..." : action === "save-saved" ? "Saved" : editingTestId ? "Save typing test" : "Create typing test"}</button>
 
           {editingTestId ? <button type="button" className="secondary-button" onClick={cancelEdit}>Cancel edit</button> : null}
 
@@ -1082,15 +1307,13 @@ function TypingTestPanel({ globalTests, schoolTests, assignments, performance, o
 
           <GradeChecks value={grades} allowed={selectedTest?.grade_levels} onChange={setGrades} />
 
-          <label>Available from<input type="datetime-local" value={availableFrom} onChange={(e) => setAvailableFrom(e.target.value)} /></label>
-
-          <label>Available until<input type="datetime-local" value={availableUntil} onChange={(e) => setAvailableUntil(e.target.value)} /></label>
+          <WeekSelect value={weekNumber} weeks={termWeeks} onChange={setWeekNumber} label="Assign for week" blankLabel="No week limit" />
 
           {error ? <p className="form-error">{error}</p> : null}
 
           {message ? <p className="success-text">{message}</p> : null}
 
-          <button type="submit"><CheckCircle2 size={16} />Assign typing test</button>
+          <button type="submit" disabled={action === "assign"}><CheckCircle2 size={16} />{action === "assign" ? "Assigning..." : action === "assign-saved" ? "Assigned" : "Assign typing test"}</button>
 
         </form>
 
@@ -1389,6 +1612,7 @@ function LearnerDetailPanel({ detail, streams, terms, onClose, onSaved, onTermCh
   const [error, setError] = useState("");
 
   const [message, setMessage] = useState("");
+  const [action, setAction] = useState("");
 
 
 
@@ -1397,16 +1621,21 @@ function LearnerDetailPanel({ detail, streams, terms, onClose, onSaved, onTermCh
     event.preventDefault();
 
     setError("");
+    setAction("save");
 
     try {
 
       await api.patch(`/school-admin/learners/${detail.learner.id}`, { ...form, grade: Number(form.grade) });
 
       onSaved(detail.learner.id);
+      setMessage("Learner saved.");
+      setAction("save-saved");
+      window.setTimeout(() => setAction(""), 1600);
 
     } catch (err) {
 
       setError(err.message);
+      setAction("");
 
     }
 
@@ -1419,6 +1648,7 @@ function LearnerDetailPanel({ detail, streams, terms, onClose, onSaved, onTermCh
     setError("");
 
     setMessage("");
+    setAction(mode);
 
     try {
 
@@ -1427,10 +1657,13 @@ function LearnerDetailPanel({ detail, streams, terms, onClose, onSaved, onTermCh
       setMessage(mode === "next_grade" ? `${result.full_name} moved to Grade ${result.grade}.` : `${result.full_name} marked ready for the next term.`);
 
       onSaved(detail.learner.id);
+      setAction(`${mode}-saved`);
+      window.setTimeout(() => setAction(""), 1600);
 
     } catch (err) {
 
       setError(err.message);
+      setAction("");
 
     }
 
@@ -1443,6 +1676,7 @@ function LearnerDetailPanel({ detail, streams, terms, onClose, onSaved, onTermCh
     setError("");
 
     setMessage("");
+    setAction(active ? "reactivate" : "deactivate");
 
     try {
 
@@ -1453,10 +1687,13 @@ function LearnerDetailPanel({ detail, streams, terms, onClose, onSaved, onTermCh
       setMessage(active ? "Learner account reactivated." : "Learner account deactivated.");
 
       onSaved(detail.learner.id);
+      setAction(active ? "reactivate-saved" : "deactivate-saved");
+      window.setTimeout(() => setAction(""), 1600);
 
     } catch (err) {
 
       setError(err.message);
+      setAction("");
 
     }
 
@@ -1526,7 +1763,7 @@ function LearnerDetailPanel({ detail, streams, terms, onClose, onSaved, onTermCh
 
         {message ? <p className="success-text">{message}</p> : null}
 
-        <button type="submit"><CheckCircle2 size={16} />Save learner</button>
+        <button type="submit" disabled={action === "save"}><CheckCircle2 size={16} />{action === "save" ? "Saving..." : action === "save-saved" ? "Saved" : "Save learner"}</button>
 
       </form>
 
@@ -1544,17 +1781,17 @@ function LearnerDetailPanel({ detail, streams, terms, onClose, onSaved, onTermCh
 
           {detail.learner.is_active ? (
 
-            <button type="button" className="secondary-button" onClick={() => setActive(false)}>Deactivate account</button>
+            <button type="button" className="secondary-button" disabled={action === "deactivate"} onClick={() => setActive(false)}>{action === "deactivate" ? "Deactivating..." : "Deactivate account"}</button>
 
           ) : (
 
-            <button type="button" className="secondary-button" onClick={() => setActive(true)}>Reactivate account</button>
+            <button type="button" className="secondary-button" disabled={action === "reactivate"} onClick={() => setActive(true)}>{action === "reactivate" ? "Reactivating..." : "Reactivate account"}</button>
 
           )}
 
-          <button type="button" className="secondary-button" onClick={() => promote("next_term")}>Promote to next term</button>
+          <button type="button" className="secondary-button" disabled={action === "next_term"} onClick={() => promote("next_term")}>{action === "next_term" ? "Promoting..." : "Promote to next term"}</button>
 
-          <button type="button" onClick={() => promote("next_grade")}><CheckCircle2 size={16} />Promote to next grade</button>
+          <button type="button" disabled={action === "next_grade"} onClick={() => promote("next_grade")}><CheckCircle2 size={16} />{action === "next_grade" ? "Promoting..." : "Promote to next grade"}</button>
 
         </div>
 
@@ -1609,6 +1846,7 @@ function PreferencesPanel({ preferences, streams, onRefresh }) {
   const [pref, setPref] = useState(preferences || {});
 
   const [streamName, setStreamName] = useState("");
+  const [action, setAction] = useState("");
 
 
 
@@ -1623,26 +1861,33 @@ function PreferencesPanel({ preferences, streams, onRefresh }) {
   async function savePreferences(event) {
 
     event.preventDefault();
+    setAction("preferences");
 
-    await api.patch("/school-admin/preferences", {
+    try {
+      await api.patch("/school-admin/preferences", {
 
-      typing_passage_words: Number(pref.typing_passage_words || 300),
+        typing_passage_words: Number(pref.typing_passage_words || 300),
 
-      typing_timer_seconds: Number(pref.typing_timer_seconds || 300),
+        typing_timer_seconds: Number(pref.typing_timer_seconds || 300),
 
-      module_pass_threshold: Number(pref.module_pass_threshold || 60),
+        module_pass_threshold: Number(pref.module_pass_threshold || 60),
 
-      leaderboards_visible: Boolean(pref.leaderboards_visible),
+        leaderboards_visible: Boolean(pref.leaderboards_visible),
 
-      ai_enabled: Boolean(pref.ai_enabled),
+        ai_enabled: Boolean(pref.ai_enabled),
 
-      notification_preferences: pref.notification_preferences || {},
+        notification_preferences: pref.notification_preferences || {},
 
-      report_header_fields: pref.report_header_fields || {}
+        report_header_fields: pref.report_header_fields || {}
 
-    });
+      });
 
-    onRefresh();
+      onRefresh();
+      setAction("preferences-saved");
+      window.setTimeout(() => setAction(""), 1600);
+    } catch {
+      setAction("");
+    }
 
   }
 
@@ -1651,12 +1896,19 @@ function PreferencesPanel({ preferences, streams, onRefresh }) {
   async function addStream(event) {
 
     event.preventDefault();
+    setAction("stream");
 
-    await api.post("/school-admin/streams", { name: streamName });
+    try {
+      await api.post("/school-admin/streams", { name: streamName });
 
-    setStreamName("");
+      setStreamName("");
 
-    onRefresh();
+      onRefresh();
+      setAction("stream-saved");
+      window.setTimeout(() => setAction(""), 1600);
+    } catch {
+      setAction("");
+    }
 
   }
 
@@ -1678,7 +1930,7 @@ function PreferencesPanel({ preferences, streams, onRefresh }) {
 
         <label className="check-row"><input type="checkbox" checked={Boolean(pref.ai_enabled)} onChange={(e) => setPref({ ...pref, ai_enabled: e.target.checked })} />AI hints and analytics enabled</label>
 
-        <button type="submit"><CheckCircle2 size={16} />Save preferences</button>
+        <button type="submit" disabled={action === "preferences"}><CheckCircle2 size={16} />{action === "preferences" ? "Saving..." : action === "preferences-saved" ? "Saved" : "Save preferences"}</button>
 
       </form>
 
@@ -1690,7 +1942,7 @@ function PreferencesPanel({ preferences, streams, onRefresh }) {
 
           <label>Stream name<input value={streamName} onChange={(e) => setStreamName(e.target.value)} required /></label>
 
-          <button type="submit"><Plus size={16} />Add stream</button>
+          <button type="submit" disabled={action === "stream"}><Plus size={16} />{action === "stream" ? "Adding..." : action === "stream-saved" ? "Added" : "Add stream"}</button>
 
         </form>
 
@@ -1753,6 +2005,8 @@ export default function SchoolAdminDashboard() {
     courses: [],
 
     terms: [],
+
+    termWeeks: [],
 
     globalQuizzes: [],
 
@@ -1856,6 +2110,8 @@ export default function SchoolAdminDashboard() {
 
         terms: api.get("/school-admin/terms"),
 
+        termWeeks: api.get("/school-admin/term-weeks"),
+
         globalQuizzes: api.get("/school-admin/global-quizzes"),
 
         schoolQuizzes: api.get("/school-admin/school-quizzes"),
@@ -1926,6 +2182,8 @@ export default function SchoolAdminDashboard() {
 
         terms: data.terms || [],
 
+        termWeeks: data.termWeeks?.weeks || [],
+
         globalQuizzes: data.globalQuizzes || [],
 
         schoolQuizzes: data.schoolQuizzes || [],
@@ -1955,6 +2213,59 @@ export default function SchoolAdminDashboard() {
     }
 
   }
+
+  const schoolRefreshers = {
+    profile: async () => api.get("/school-admin/profile"),
+    summary: async () => api.get("/school-admin/summary"),
+    enrolment: async () => api.get("/school-admin/enrolment-by-course"),
+    progress: async () => api.get("/school-admin/class-progress"),
+    learners: async () => (await api.get("/school-admin/learners"))?.data || [],
+    submissions: async () => (await api.get("/school-admin/submissions"))?.data || [],
+    typing: async () => (await api.get("/school-admin/typing-results"))?.data || [],
+    quizzes: async () => (await api.get("/school-admin/quiz-results"))?.data || [],
+    leaderboards: async () => (await api.get("/school-admin/leaderboards"))?.data || [],
+    preferences: async () => api.get("/school-admin/preferences"),
+    streams: async () => api.get("/school-admin/streams"),
+    courses: async () => api.get("/school-admin/courses"),
+    terms: async () => api.get("/school-admin/terms"),
+    termWeeks: async () => (await api.get("/school-admin/term-weeks"))?.weeks || [],
+    globalQuizzes: async () => api.get("/school-admin/global-quizzes"),
+    schoolQuizzes: async () => api.get("/school-admin/school-quizzes"),
+    quizAssignments: async () => api.get("/school-admin/quiz-assignments"),
+    quizPerformance: async () => api.get("/school-admin/quiz-performance"),
+    globalTypingTests: async () => api.get("/school-admin/typing/global-tests"),
+    schoolTypingTests: async () => api.get("/school-admin/typing/school-tests"),
+    typingAssignments: async () => api.get("/school-admin/typing/assignments"),
+    typingPerformance: async () => api.get("/school-admin/typing/performance")
+  };
+
+  async function refreshDashboardSlices(sliceNames) {
+    const uniqueSlices = [...new Set(sliceNames)];
+    try {
+      const entries = await Promise.all(uniqueSlices.map(async (slice) => [slice, await schoolRefreshers[slice]()]));
+      setState((current) => ({ ...current, ...Object.fromEntries(entries) }));
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function refreshLearnerLists() {
+    await Promise.all([
+      refreshDashboardSlices(["summary", "progress"]),
+      loadLearnersWithFilters()
+    ]);
+  }
+
+  async function refreshAllocations() {
+    await Promise.all([
+      refreshDashboardSlices(["summary", "enrolment", "progress", "courses"]),
+      loadLearnersWithFilters()
+    ]);
+  }
+
+  const refreshTypingSetup = () => refreshDashboardSlices(["globalTypingTests", "schoolTypingTests", "typingAssignments", "typingPerformance", "typing"]);
+  const refreshQuizSetup = () => refreshDashboardSlices(["globalQuizzes", "schoolQuizzes", "quizAssignments", "quizPerformance", "quizzes"]);
+  const refreshPreferences = () => refreshDashboardSlices(["preferences", "streams"]);
 
 
 
@@ -1999,8 +2310,7 @@ export default function SchoolAdminDashboard() {
 
 
   async function refreshLearnerDetail(id) {
-
-    await loadDashboard();
+    await refreshLearnerLists();
 
     if (id) {
 
@@ -2028,7 +2338,7 @@ export default function SchoolAdminDashboard() {
 
       setNotice(`${row.name} deallocated from ${result.count} learner${result.count === 1 ? "" : "s"} for the active term.`);
 
-      await loadDashboard();
+      await refreshAllocations();
 
     } catch (err) {
 
@@ -2290,6 +2600,10 @@ export default function SchoolAdminDashboard() {
 
           </div>
 
+          <button type="button" className="compact-action" onClick={loadDashboard}>
+            <RefreshCw size={14} />Refresh
+          </button>
+
         </header>
 
 
@@ -2392,9 +2706,9 @@ export default function SchoolAdminDashboard() {
 
             </form>
 
-            <AddLearnerForm streams={state.streams} onCreated={loadDashboard} />
+            <AddLearnerForm streams={state.streams} onCreated={refreshLearnerLists} />
 
-            <BulkLearnerUpload onUploaded={loadDashboard} />
+            <BulkLearnerUpload onUploaded={refreshLearnerLists} />
 
             <DataTable rows={state.learners} emptyTitle="No learners in this school yet" columns={[
 
@@ -2468,7 +2782,7 @@ export default function SchoolAdminDashboard() {
 
             </div>
 
-            <CourseAllocationPanel learners={state.learners} courses={state.courses} onAllocated={loadDashboard} />
+            <CourseAllocationPanel learners={state.learners} courses={state.courses} termWeeks={state.termWeeks} onAllocated={refreshAllocations} />
 
             <EmptyState title="Term workflow controls are staged" detail="The dashboard reads active term data now. The next build pass will wire the term enrolment wizard actions." />
 
@@ -2486,11 +2800,13 @@ export default function SchoolAdminDashboard() {
 
             <DataTable rows={state.courses} emptyTitle="No courses available yet" columns={[
 
-              { key: "name", label: "Course" },
+              { key: "cover", label: "Cover", render: (row) => <CourseCoverThumb course={row} /> },
+
+              { key: "name", label: "Course", render: (row) => <button type="button" className="link-button" onClick={() => setActiveTab(`course:${row.id}`)}>{row.name}</button> },
 
               { key: "is_coming_soon", label: "Status", render: (row) => row.is_coming_soon ? "Program under development" : "Available" },
 
-              { key: "action", label: "Open", render: (row) => <button type="button" onClick={() => setActiveTab(`course:${row.id}`)}>Open</button> }
+              { key: "action", label: "Content", render: (row) => <button type="button" onClick={() => window.location.assign(`/school-admin/course/${row.id}/preview`)}>Preview</button> }
 
             ]} />
 
@@ -2502,9 +2818,15 @@ export default function SchoolAdminDashboard() {
 
         {!loading && activeCourse && (
 
+          <div className="school-section">
+
           <section className="panel">
 
             <h2>{activeCourse.name}</h2>
+
+            {activeCourse.cover_image_url ? (
+              <img className="school-course-cover-hero" src={assetUrl(activeCourse.cover_image_url)} alt={`${activeCourse.name} cover`} />
+            ) : null}
 
             {activeCourse.name === "Web development" ? (
 
@@ -2512,13 +2834,13 @@ export default function SchoolAdminDashboard() {
 
                 {(activeCourse.modules || []).map((module) => (
 
-                  <article className="module-card" key={module.id}>
+                  <article className="module-card module-card-button" key={module.id} role="button" tabIndex={0} onClick={() => window.location.assign(`/school-admin/course/${activeCourse.id}/preview`)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") window.location.assign(`/school-admin/course/${activeCourse.id}/preview`); }}>
 
                     <span>Module {module.sort_order}</span>
 
                     <h3>{module.name}</h3>
 
-                    <p>{module.objectives}</p>
+                    <p style={{ whiteSpace: "pre-wrap" }}>{module.objectives}</p>
 
                     <strong>{module.badge_name} · {module.xp_points} XP</strong>
 
@@ -2531,6 +2853,10 @@ export default function SchoolAdminDashboard() {
             ) : <p className="helper-text">Program under development coming soon.</p>}
 
           </section>
+
+          <CourseCertificatePanel course={activeCourse} schoolLogoUrl={state.profile?.logo_url || ""} />
+
+          </div>
 
         )}
 
@@ -2546,11 +2872,21 @@ export default function SchoolAdminDashboard() {
 
               { key: "learner_name", label: "Learner" },
 
+              { key: "course_name", label: "Course", render: (row) => row.course_name || "-" },
+
+              { key: "lesson_name", label: "Lesson", render: (row) => row.lesson_name || "-" },
+
+              { key: "activity_type", label: "Activity", render: (row) => String(row.activity_type || row.source || "Submission").replace(/_/g, " ") },
+
+              { key: "score", label: "Score", render: (row) => row.score ?? "-" },
+
               { key: "status", label: "Status" },
 
-              { key: "file_url", label: "File" },
+              { key: "file_url", label: "Evidence", render: (row) => row.file_url || row.submission?.fileName || row.submission?.link || row.submission?.text || row.submission?.code || "-" },
 
-              { key: "created_at", label: "Submitted", render: (row) => formatDate(row.created_at) }
+              { key: "created_at", label: "Submitted", render: (row) => formatDate(row.created_at) },
+
+              { key: "review", label: "Feedback", render: (row) => <SubmissionReview row={row} onReviewed={() => refreshDashboardSlices(["submissions", "summary"])} /> }
 
             ]} />
 
@@ -2564,7 +2900,7 @@ export default function SchoolAdminDashboard() {
 
           <section className="school-section">
 
-            <TypingTestPanel globalTests={state.globalTypingTests} schoolTests={state.schoolTypingTests} assignments={state.typingAssignments} performance={state.typingPerformance} onRefresh={loadDashboard} />
+            <TypingTestPanel globalTests={state.globalTypingTests} schoolTests={state.schoolTypingTests} assignments={state.typingAssignments} performance={state.typingPerformance} termWeeks={state.termWeeks} onRefresh={refreshTypingSetup} />
 
             <section className="panel">
 
@@ -2614,9 +2950,9 @@ export default function SchoolAdminDashboard() {
 
             </section>
 
-            <QuizAssignmentPanel globalQuizzes={state.globalQuizzes} schoolQuizzes={state.schoolQuizzes} assignments={state.quizAssignments} performance={state.quizPerformance} onRefresh={loadDashboard} />
+            <QuizAssignmentPanel globalQuizzes={state.globalQuizzes} schoolQuizzes={state.schoolQuizzes} assignments={state.quizAssignments} performance={state.quizPerformance} termWeeks={state.termWeeks} onRefresh={refreshQuizSetup} />
 
-            <CreateSchoolQuizForm onCreated={loadDashboard} />
+            <CreateSchoolQuizForm onCreated={refreshQuizSetup} />
 
             <section className="panel">
 
@@ -2676,7 +3012,7 @@ export default function SchoolAdminDashboard() {
 
         {!loading && activeTab === "preferences" && (
 
-          <PreferencesPanel preferences={state.preferences} streams={state.streams} onRefresh={loadDashboard} />
+          <PreferencesPanel preferences={state.preferences} streams={state.streams} onRefresh={refreshPreferences} />
 
         )}
 

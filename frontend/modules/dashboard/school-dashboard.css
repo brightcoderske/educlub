@@ -14,6 +14,10 @@
 }
 
 .school-sidebar {
+  position: sticky;
+  top: 0;
+  align-self: start;
+  height: 100vh;
   background: linear-gradient(180deg, #1e3a8a 0%, #1e40af 100%);
   color: #fff;
   padding: 16px 12px;
@@ -23,7 +27,18 @@
   box-shadow: 4px 0 24px rgba(30, 58, 138, 0.12);
   transition: padding-inline 0.25s ease;
   overflow-y: auto;
-  max-height: 100vh;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.36) transparent;
+}
+
+.school-sidebar::-webkit-scrollbar {
+  width: 8px;
+}
+
+.school-sidebar::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.32);
+  border-radius: 999px;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -112,6 +127,11 @@
 .school-sidebar button:hover,
 .school-sidebar button.active {
   background: rgba(255, 255, 255, 0.12);
+}
+
+button:disabled {
+  opacity: 0.65;
+  cursor: wait;
 }
 
 .school-sidebar .sidebar-toggle {
@@ -430,6 +450,50 @@
   text-decoration: underline;
 }
 
+.module-card-button {
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+
+.module-card-button:hover {
+  border-color: #3b82f6;
+}
+
+.submission-review {
+  display: grid;
+  gap: 8px;
+  min-width: 240px;
+}
+
+.submission-review-panel {
+  display: grid;
+  gap: 8px;
+}
+
+.submission-review-panel select,
+.submission-review-panel textarea {
+  width: 100%;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 9px 10px;
+  font: inherit;
+}
+
+.submission-review-panel textarea {
+  min-height: 96px;
+  resize: vertical;
+}
+
+.certificate-panel .certificate-preview {
+  width: min(100%, 860px);
+  min-height: 420px;
+  margin: 0 auto 18px;
+  transform: scale(0.86);
+  transform-origin: top center;
+}
+
 .learner-detail-backdrop {
   position: fixed;
   inset: 0;
@@ -658,6 +722,39 @@
   grid-column: 1 / -1;
 }
 
+.school-course-cover-cell {
+  width: 74px;
+  height: 46px;
+  border-radius: 8px;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(135deg, #dbeafe, #dcfce7);
+  color: #1e40af;
+  font-weight: 800;
+  border: 1px solid #dbeafe;
+}
+
+.school-course-cover-cell img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.school-course-cover-hero {
+  width: 100%;
+  max-height: 260px;
+  object-fit: cover;
+  border-radius: 14px;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
+}
+
+.school-course-cover-hero.allocation-cover {
+  max-height: 180px;
+}
+
 .helper-text {
   margin: 6px 0 0;
   color: #475569;
@@ -683,6 +780,7 @@
 
   .school-sidebar {
     position: static;
+    height: auto;
     max-height: none;
   }
 

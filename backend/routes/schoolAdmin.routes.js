@@ -9,6 +9,8 @@ router.use(authenticate, requireRoles("school_admin"));
 
 router.get("/profile", controller.profile);
 router.get("/active-term", controller.activeTerm);
+router.get("/term-weeks", controller.termWeeks);
+router.get("/terms/:id/weeks", controller.termWeeks);
 router.get("/terms", controller.terms);
 router.get("/summary", controller.dashboardSummary);
 router.get("/enrolment-by-course", controller.enrolmentByCourse);
@@ -21,6 +23,7 @@ router.patch("/learners/:id", controller.updateLearner);
 router.patch("/learners/:id/status", controller.setLearnerActive);
 router.post("/learners/:id/promotions", controller.promoteLearner);
 router.get("/courses", controller.availableCourses);
+router.get("/courses/:courseId/certificate-learners", controller.courseCertificateLearners);
 router.post("/course-allocations", controller.bulkAllocateCourse);
 router.delete("/course-allocations/:courseId", controller.deallocateCourse);
 router.get("/submissions", controller.listSubmissions);

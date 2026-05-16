@@ -136,6 +136,45 @@ create unique index if not exists users_school_username_unique_active
   on users (school_id, lower(username))
   where username is not null and deleted_at is null;
 
+create table if not exists login_2fa_challenges (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references users(id) on delete cascade,
+  code_hash text not null,
+  attempts integer not null default 0,
+  expires_at timestamptz not null,
+  consumed_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table login_2fa_challenges add column if not exists user_id uuid references users(id) on delete cascade;
+alter table login_2fa_challenges add column if not exists code_hash text;
+alter table login_2fa_challenges add column if not exists attempts integer not null default 0;
+alter table login_2fa_challenges add column if not exists expires_at timestamptz;
+alter table login_2fa_challenges add column if not exists consumed_at timestamptz;
+alter table login_2fa_challenges add column if not exists created_at timestamptz not null default now();
+alter table login_2fa_challenges add column if not exists updated_at timestamptz not null default now();
+create index if not exists login_2fa_challenges_user_active_idx
+  on login_2fa_challenges (user_id, expires_at)
+  where consumed_at is null;
+
+create table if not exists learner_profiles (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references users(id) on delete cascade,
+  school_id uuid not null references schools(id) on delete cascade,
+  full_name text not null,
+  grade text,
+  stream text,
+  parent_name text,
+  parent_email text,
+  parent_phone text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (user_id)
+);
+
+create index if not exists learner_profiles_school_idx on learner_profiles (school_id);
+
 create table if not exists grade_history (
   id uuid primary key default gen_random_uuid(),
   learner_id uuid not null references users(id) on delete cascade,
@@ -223,28 +262,6 @@ alter table lessons add column if not exists creativity_prompt text;
 alter table lessons add column if not exists quiz jsonb not null default '[]'::jsonb;
 alter table lessons add column if not exists xp_points integer not null default 20;
 
-create table if not exists school_lesson_annotations (
-  id uuid primary key default gen_random_uuid(),
-  school_id uuid not null references schools(id) on delete cascade,
-  lesson_id uuid not null references lessons(id) on delete cascade,
-  example_override text,
-  annotation text,
-  updated_by uuid references users(id) on delete set null,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
-  unique (school_id, lesson_id)
-);
-
-create table if not exists practice_tasks (
-  id uuid primary key default gen_random_uuid(),
-  lesson_id uuid not null references lessons(id) on delete cascade,
-  task_type text not null check (task_type in ('quiz', 'file_submission')),
-  title text not null,
-  prompt text,
-  sort_order integer not null,
-  created_at timestamptz not null default now()
-);
-
 create table if not exists enrolments (
   id uuid primary key default gen_random_uuid(),
   learner_id uuid not null references users(id) on delete cascade,
@@ -278,14 +295,19 @@ alter table lesson_progress add column if not exists xp_points integer not null 
 create table if not exists course_module_availability (
   id uuid primary key default gen_random_uuid(),
   school_id uuid not null references schools(id) on delete cascade,
+  term_id uuid references terms(id) on delete cascade,
   course_id uuid not null references courses(id) on delete cascade,
   module_id uuid not null references modules(id) on delete cascade,
+  week_number integer check (week_number is null or week_number >= 1),
   available_from timestamptz,
   created_by uuid references users(id) on delete set null,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   unique (school_id, module_id)
 );
+
+alter table course_module_availability add column if not exists term_id uuid references terms(id) on delete cascade;
+alter table course_module_availability add column if not exists week_number integer;
 
 create table if not exists quiz_questions (
   id uuid primary key default gen_random_uuid(),
@@ -373,6 +395,7 @@ alter table quiz_attempts add column if not exists attempt_number integer not nu
 alter table quiz_attempts add column if not exists answers jsonb not null default '{}'::jsonb;
 alter table quiz_assignments add column if not exists available_from timestamptz;
 alter table quiz_assignments add column if not exists available_until timestamptz;
+alter table quiz_assignments add column if not exists week_number integer;
 
 create table if not exists typing_results (
   id uuid primary key default gen_random_uuid(),
@@ -422,6 +445,7 @@ create table if not exists typing_assignments (
   term_id uuid references terms(id) on delete restrict,
   grade integer not null check (grade between 1 and 9),
   assigned_by uuid references users(id) on delete set null,
+  week_number integer check (week_number is null or week_number >= 1),
   available_from timestamptz,
   available_until timestamptz,
   is_active boolean not null default true,
@@ -436,6 +460,7 @@ alter table typing_assignments add column if not exists grade integer;
 alter table typing_assignments add column if not exists assigned_by uuid references users(id) on delete set null;
 alter table typing_assignments add column if not exists available_from timestamptz;
 alter table typing_assignments add column if not exists available_until timestamptz;
+alter table typing_assignments add column if not exists week_number integer;
 alter table typing_assignments add column if not exists is_active boolean not null default true;
 alter table typing_assignments add column if not exists assigned_at timestamptz not null default now();
 
@@ -642,12 +667,11 @@ alter table terms enable row level security;
 alter table schools enable row level security;
 alter table school_active_terms enable row level security;
 alter table users enable row level security;
+alter table learner_profiles enable row level security;
 alter table grade_history enable row level security;
 alter table courses enable row level security;
 alter table modules enable row level security;
 alter table lessons enable row level security;
-alter table school_lesson_annotations enable row level security;
-alter table practice_tasks enable row level security;
 alter table enrolments enable row level security;
 alter table lesson_progress enable row level security;
 alter table quiz_questions enable row level security;

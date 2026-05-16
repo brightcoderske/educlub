@@ -87,6 +87,11 @@ async function ensureDefaultCourses(db) {
   const course = (await db.query("select id from courses where lower(coalesce(name, title)) = lower('Web development') limit 1")).rows[0];
   if (!course) return;
 
+  const existingModules = (await db.query("select count(*)::int as count from modules where course_id = $1", [course.id])).rows[0];
+  if (Number(existingModules?.count || 0) > 0) {
+    return;
+  }
+
   for (let moduleIndex = 0; moduleIndex < WEB_MODULES.length; moduleIndex += 1) {
     const [moduleName, lessons] = WEB_MODULES[moduleIndex];
     const module = (await db.query(

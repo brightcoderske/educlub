@@ -36,7 +36,7 @@ async function main() {
            school_id = $3,
            password_hash = $4,
            force_password_change = true,
-           two_factor_enabled = false,
+           two_factor_enabled = true,
            is_active = true,
            updated_at = now()
        where id = $1`,
@@ -49,7 +49,7 @@ async function main() {
 
   await query(
     `insert into users (school_id, role, name, full_name, email, password_hash, must_change_password, force_password_change, two_factor_enabled, status, is_active)
-     values ($1, 'school_admin', $2, $2, $3, $4, true, true, false, 'active', true)`,
+     values ($1, 'school_admin', $2, $2, $3, $4, true, true, true, 'active', true)`,
     [schoolId, fullName, normalizedEmail, passwordHash]
   );
 

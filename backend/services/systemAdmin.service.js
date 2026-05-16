@@ -4,7 +4,8 @@ const path = require("path");
 const { one, list, query, pagination, transaction } = require("../config/database");
 const { recordAudit } = require("../utils/audit");
 const { ensureDefaultCourses } = require("../utils/courseSeed");
-const { ensureTypingColumns } = require("../utils/schemaGuard");
+const { ensureTypingColumns, ensureLearnerProfilesSchema } = require("../utils/schemaGuard");
+const { availabilityForWeek, moduleOpenDateForWeek } = require("./termWeeks.service");
 
 const SYSTEM_ADMIN = "system_admin";
 const TERM_LABELS = ["Term 1", "Term 2", "Term 3"];
@@ -55,6 +56,20 @@ function normalizeTermLabel(value) {
 function boolFromPayload(value, defaultValue = true) {
   if (value === undefined || value === null) return defaultValue;
   return Boolean(value);
+}
+
+function validateTermDates(startsOn, endsOn) {
+  if (!startsOn || !endsOn) {
+    const error = new Error("Term start and end dates are required");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (new Date(`${startsOn}T00:00:00Z`).getTime() > new Date(`${endsOn}T00:00:00Z`).getTime()) {
+    const error = new Error("Term start date cannot be after the end date");
+    error.statusCode = 400;
+    throw error;
+  }
 }
 
 async function setGlobalActiveTermWithClient(client, termId, user) {
@@ -139,6 +154,8 @@ async function createSchool(payload, user) {
 }
 
 async function getSchoolDetail(id) {
+  await ensureLearnerProfilesSchema({ query });
+
   const school = await one(
     `select id, name, contact_email, logo_url, clubs, status, is_active, suspended_at, deleted_at, created_at
      from schools
@@ -172,7 +189,7 @@ async function getSchoolDetail(id) {
               avg(tr.wpm)::numeric as average_typing_wpm
        from users u
        left join learner_profiles lp on lp.user_id = u.id and lp.school_id = u.school_id
-       left join enrolments e on e.learner_id = lp.id and e.school_id = u.school_id
+       left join enrolments e on e.school_id = u.school_id and e.learner_id = any(array_remove(array[u.id, lp.id], null::uuid))
        left join quiz_attempts qa on qa.learner_id = u.id and qa.school_id = u.school_id
        left join (
          select learner_id, school_id, wpm from typing_results
@@ -335,7 +352,6 @@ async function deleteSchoolPermanently(id) {
     await client.query("delete from quiz_items where quiz_id in (select id from quizzes where school_id = $1)", [id]);
     await client.query("delete from quizzes where school_id = $1", [id]);
     await client.query("delete from quiz_questions where school_id = $1", [id]);
-    await client.query("delete from school_lesson_annotations where school_id = $1", [id]);
     await client.query("delete from enrolments where school_id = $1", [id]);
     await client.query("delete from grade_history where school_id = $1", [id]);
     await client.query("delete from school_streams where school_id = $1", [id]);
@@ -406,11 +422,7 @@ async function createTerm(payload, user) {
     error.statusCode = 400;
     throw error;
   }
-  if (!payload.starts_on || !payload.ends_on) {
-    const error = new Error("Term start and end dates are required");
-    error.statusCode = 400;
-    throw error;
-  }
+  validateTermDates(payload.starts_on, payload.ends_on);
 
   return transaction(async (client) => {
     let academicYearId = payload.academic_year_id || null;
@@ -437,6 +449,7 @@ async function createTerm(payload, user) {
       [academicYearId, label, payload.starts_on, payload.ends_on]
     );
     const term = result.rows[0];
+    const recalculated = await recalculateWeekAvailability(client, term);
     await recordAudit({
       client,
       actor: user,
@@ -444,14 +457,109 @@ async function createTerm(payload, user) {
       targetType: "term",
       targetId: term.id,
       termId: term.id,
-      metadata: { year, label }
+      metadata: { year, label, recalculated }
     });
 
     if (boolFromPayload(payload.make_global_active, true)) {
       return setGlobalActiveTermWithClient(client, term.id, user);
     }
 
-    return term;
+    return { ...term, recalculated };
+  });
+}
+
+async function recalculateWeekAvailability(client, term) {
+  const typingRows = await client.query(
+    "select id, week_number from typing_assignments where term_id = $1 and week_number is not null",
+    [term.id]
+  );
+  for (const row of typingRows.rows) {
+    const availability = availabilityForWeek(term, row.week_number);
+    if (!availability) continue;
+    await client.query(
+      "update typing_assignments set available_from = $2, available_until = $3 where id = $1",
+      [row.id, availability.available_from, availability.available_until]
+    );
+  }
+
+  const quizRows = await client.query(
+    "select id, week_number from quiz_assignments where term_id = $1 and week_number is not null",
+    [term.id]
+  );
+  for (const row of quizRows.rows) {
+    const availability = availabilityForWeek(term, row.week_number);
+    if (!availability) continue;
+    await client.query(
+      "update quiz_assignments set available_from = $2, available_until = $3 where id = $1",
+      [row.id, availability.available_from, availability.available_until]
+    );
+  }
+
+  const moduleRows = await client.query(
+    "select id, week_number from course_module_availability where term_id = $1 and week_number is not null",
+    [term.id]
+  );
+  for (const row of moduleRows.rows) {
+    const availableFrom = moduleOpenDateForWeek(term, row.week_number);
+    if (!availableFrom) continue;
+    await client.query(
+      "update course_module_availability set available_from = $2, updated_at = now() where id = $1",
+      [row.id, availableFrom]
+    );
+  }
+
+  return {
+    typing_assignments: typingRows.rows.length,
+    quiz_assignments: quizRows.rows.length,
+    module_availability: moduleRows.rows.length
+  };
+}
+
+async function updateTerm(termId, payload, user) {
+  const startsOn = payload.starts_on;
+  const endsOn = payload.ends_on;
+  validateTermDates(startsOn, endsOn);
+
+  return transaction(async (client) => {
+    const existing = await client.query(
+      `select t.id, coalesce(t.label, t.name::text) as name, t.starts_on, t.ends_on, ay.year
+       from terms t
+       join academic_years ay on ay.id = t.academic_year_id
+       where t.id = $1`,
+      [termId]
+    );
+    const current = existing.rows[0];
+    if (!current) {
+      const error = new Error("Term not found");
+      error.statusCode = 404;
+      throw error;
+    }
+
+    const updated = await client.query(
+      `update terms
+       set starts_on = $2, ends_on = $3, updated_at = now()
+       where id = $1
+       returning id, academic_year_id, coalesce(label, name::text) as name, label, starts_on, ends_on, status, is_global_active, updated_at`,
+      [termId, startsOn, endsOn]
+    );
+    const term = updated.rows[0];
+    const recalculated = await recalculateWeekAvailability(client, term);
+
+    await recordAudit({
+      client,
+      actor: user,
+      action: "term.update_dates",
+      targetType: "term",
+      targetId: term.id,
+      termId: term.id,
+      metadata: {
+        before: { starts_on: current.starts_on, ends_on: current.ends_on },
+        after: { starts_on: term.starts_on, ends_on: term.ends_on },
+        recalculated
+      }
+    });
+
+    return { ...term, recalculated };
   });
 }
 
@@ -505,7 +613,7 @@ async function createSchoolAdmin(payload, user) {
   const passwordHash = await bcrypt.hash(payload.password, 12);
   const admin = await one(
     `insert into users (school_id, role, name, full_name, email, password_hash, must_change_password, force_password_change, two_factor_enabled, status, is_active)
-     values ($1, 'school_admin', $2, $2, lower($3), $4, true, true, false, 'active', true)
+     values ($1, 'school_admin', $2, $2, lower($3), $4, true, true, true, 'active', true)
      returning id, school_id, role, full_name, email, is_active, created_at`,
     [payload.school_id, payload.full_name, payload.email, passwordHash]
   );
@@ -642,6 +750,8 @@ async function deactivateUser(id, user) {
 
 async function softDeleteUser(id, user) {
   return transaction(async (client) => {
+    await ensureLearnerProfilesSchema(client);
+
     const existing = await client.query(
       `select u.id, u.school_id, u.role, coalesce(u.full_name, u.name) as full_name, lp.id as learner_profile_id
        from users u
@@ -664,14 +774,14 @@ async function softDeleteUser(id, user) {
       [id]
     );
 
-    if (target.role === "student" && target.learner_profile_id) {
+    if (target.role === "student") {
       await client.query(
         `update enrolments
          set status = 'inactive', updated_at = now()
-         where learner_id = $1
+         where learner_id = any($1::uuid[])
            and term_id = (select id from terms where is_global_active = true limit 1)
            and status = 'active'`,
-        [target.learner_profile_id]
+        [[target.id, target.learner_profile_id].filter(Boolean)]
       );
     }
 
@@ -724,6 +834,7 @@ async function listCourses(params = {}) {
   values.push(limit, offset);
   return list(
     `select c.id, coalesce(c.name, c.title) as name, coalesce(c.objectives, c.description) as objectives, c.club,
+            c.cover_image_url,
             c.is_published, c.is_coming_soon, c.published_at, c.created_at,
             coalesce(json_agg(json_build_object('id', m.id, 'name', coalesce(m.name, m.title), 'objectives', coalesce(m.objectives, m.description), 'sort_order', m.sort_order, 'badge_name', m.badge_name, 'xp_points', m.xp_points) order by m.sort_order) filter (where m.id is not null), '[]'::json) as modules
      from courses c
@@ -1246,6 +1357,7 @@ module.exports = {
   listTerms,
   createAcademicYear,
   createTerm,
+  updateTerm,
   setGlobalActiveTerm,
   listUsers,
   createSchoolAdmin,

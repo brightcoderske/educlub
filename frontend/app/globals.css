@@ -220,6 +220,13 @@ a {
   font-weight: 700;
 }
 
+.auth-note {
+  margin: -4px 0 0;
+  color: #4f6274;
+  line-height: 1.5;
+  font-weight: 700;
+}
+
 .auth-submit {
   min-height: 56px;
   border: 0;
@@ -246,6 +253,20 @@ a {
 .auth-submit:disabled {
   cursor: wait;
   opacity: 0.72;
+}
+
+.auth-link-button {
+  border: 0;
+  background: transparent;
+  color: #2367d1;
+  font-weight: 900;
+  cursor: pointer;
+  min-height: 40px;
+}
+
+.auth-link-button:disabled {
+  cursor: wait;
+  opacity: 0.66;
 }
 
 .page-shell {

@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { useFormik } from "formik";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, List, ListOrdered } from "lucide-react";
 import { api } from "../../../lib/api";
 import toast from "react-hot-toast";
 
@@ -43,6 +43,53 @@ const validate = (values) => {
 
   return errors;
 };
+
+function FormattedTextarea({ name, value, onChange, disabled, rows = 4, required = false }) {
+  const ref = useRef(null);
+
+  const insertList = (ordered = false) => {
+    const text = String(value || "");
+    const start = ref.current?.selectionStart ?? text.length;
+    const end = ref.current?.selectionEnd ?? text.length;
+    const before = text.slice(0, start);
+    const selected = text.slice(start, end);
+    const after = text.slice(end);
+    const formatted = (selected ? selected.split(/\r?\n/) : [""])
+      .map((line, index) => {
+        const clean = line.replace(/^\s*(?:[-*]|\d+\.)\s+/, "");
+        return `${ordered ? `${index + 1}.` : "-"} ${clean}`;
+      })
+      .join("\n");
+    onChange({ target: { name, value: `${before}${formatted}${after}` } });
+    window.requestAnimationFrame(() => {
+      ref.current?.focus();
+      ref.current?.setSelectionRange(start, start + formatted.length);
+    });
+  };
+
+  return (
+    <div>
+      <div className="flex gap-1 px-2 py-1 border border-gray-300 border-b-0 rounded-t-lg bg-gray-50">
+        <button type="button" onClick={() => insertList(false)} disabled={disabled} title="Bullet list" className="inline-grid h-8 w-8 place-items-center rounded-md text-gray-600 hover:bg-blue-50 hover:text-blue-700">
+          <List size={15} />
+        </button>
+        <button type="button" onClick={() => insertList(true)} disabled={disabled} title="Numbered list" className="inline-grid h-8 w-8 place-items-center rounded-md text-gray-600 hover:bg-blue-50 hover:text-blue-700">
+          <ListOrdered size={15} />
+        </button>
+      </div>
+      <textarea
+        ref={ref}
+        name={name}
+        onChange={onChange}
+        value={value}
+        disabled={disabled}
+        className="w-full px-4 py-2 border border-gray-300 rounded-b-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+        rows={rows}
+        required={required}
+      />
+    </div>
+  );
+}
 
 function EditCourseGeneral({ courseId, onSave }) {
   const [error, setError] = useState("");
@@ -189,12 +236,11 @@ function EditCourseGeneral({ courseId, onSave }) {
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 About
               </label>
-              <textarea
+              <FormattedTextarea
                 name="about"
                 onChange={formik.handleChange}
                 value={formik.values.about}
                 disabled={saving}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 rows={6}
                 required
               />

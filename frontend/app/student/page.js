@@ -465,6 +465,9 @@ function CourseCard({ course }) {
   
   return (
     <div className="student-course-card" onClick={() => router.push(`/student/course/${course.course_id}`)}>
+      {course.cover_image_url ? (
+        <img className="student-course-cover" src={assetUrl(course.cover_image_url)} alt={`${course.course_name || "Course"} cover`} />
+      ) : null}
       <h3>{course.course_name || "Untitled Course"}</h3>
       <div className="course-meta">
         <span>{course.club || "No club"}</span>
@@ -529,6 +532,16 @@ function initialLessonDraft(lesson) {
   };
 }
 
+function average(rows, key) {
+  const values = (rows || []).map((row) => Number(row[key])).filter((value) => Number.isFinite(value));
+  if (!values.length) return null;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function sameId(left, right) {
+  return String(left || "") === String(right || "");
+}
+
 export default function StudentPage() {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState("overview");
@@ -540,13 +553,17 @@ export default function StudentPage() {
   const [activeQuiz, setActiveQuiz] = useState(null);
   const [activeTyping, setActiveTyping] = useState(null);
   const [activeCourse, setActiveCourse] = useState(null);
+  const [selectedLesson, setSelectedLesson] = useState(null);
+  const [lessonDraft, setLessonDraft] = useState({});
   const [answers, setAnswers] = useState({});
   const [typedText, setTypedText] = useState("");
   const [typingStartedAt, setTypingStartedAt] = useState(null);
   const [typingRemaining, setTypingRemaining] = useState(0);
   const [quizResult, setQuizResult] = useState(null);
   const [typingResult, setTypingResult] = useState(null);
+  const [quizSubmitting, setQuizSubmitting] = useState(false);
   const [typingSubmitting, setTypingSubmitting] = useState(false);
+  const [studentNotice, setStudentNotice] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -554,6 +571,33 @@ export default function StudentPage() {
     const term = dashboard?.active_term;
     return term ? `${term.year} - ${term.name}` : "No active term";
   }, [dashboard]);
+
+  const weeklyWork = useMemo(() => {
+    if (!dashboard) return [];
+    return [
+      ...(dashboard.assigned_quizzes || []).filter((quiz) => quiz.can_attempt).slice(0, 4).map((quiz) => ({
+        id: `quiz-${quiz.quiz_id}`,
+        type: "Quiz",
+        title: quiz.title || "Assigned quiz",
+        detail: `${quiz.attempts_used || 0}/${quiz.max_attempts || 1} attempts used`,
+        action: () => openQuiz(quiz.quiz_id)
+      })),
+      ...(dashboard.assigned_typing_tests || []).slice(0, 4).map((test) => ({
+        id: `typing-${test.typing_test_id}`,
+        type: "Typing",
+        title: test.title || "Typing test",
+        detail: `${test.attempts_used || 0}/${test.max_attempts || 3} attempts used`,
+        action: () => openTypingTest(test.typing_test_id)
+      })),
+      ...(dashboard.courses || []).slice(0, 4).map((course) => ({
+        id: `course-${course.course_id}`,
+        type: "Module",
+        title: course.course_name || "Course module",
+        detail: course.term_name || "Assigned course",
+        action: () => router.push(`/student/course/${course.course_id}`)
+      }))
+    ].slice(0, 8);
+  }, [dashboard, router]);
 
   const loadDashboard = useCallback(async () => {
     setLoading(true);
@@ -619,6 +663,108 @@ export default function StudentPage() {
 
   const summary = dashboard?.summary || {};
 
+  const updateDashboardAfterLesson = useCallback((lesson, saved, courseDetail) => {
+    setDashboard((current) => {
+      if (!current) return current;
+      const courseName = courseDetail?.title || courseDetail?.name || activeCourse?.title || activeCourse?.name || "Course";
+      const nextLesson = {
+        id: saved.id || lesson.id,
+        lesson_id: lesson.id,
+        lesson_name: lesson.title || lesson.lesson_name || "Untitled Lesson",
+        course_id: courseDetail?.id || activeCourse?.id || lesson.course_id,
+        course_name: courseName,
+        score: saved.score ?? lesson.score ?? null,
+        updated_at: saved.updated_at || new Date().toISOString()
+      };
+      const lessonProgress = [
+        nextLesson,
+        ...(current.lesson_progress || []).filter((row) => !sameId(row.lesson_id || row.id, lesson.id))
+      ].slice(0, 12);
+      return { ...current, lesson_progress: lessonProgress };
+    });
+  }, [activeCourse]);
+
+  const updateDashboardAfterQuiz = useCallback((result) => {
+    setDashboard((current) => {
+      if (!current || !activeQuiz) return current;
+      const score = Number(result.score || 0);
+      const quizResults = [
+        {
+          id: result.id,
+          quiz_id: result.quiz_id || activeQuiz.quiz_id,
+          quiz_title: activeQuiz.title || "Untitled Quiz",
+          score,
+          time_taken_seconds: result.time_taken_seconds ?? null,
+          created_at: result.created_at || new Date().toISOString(),
+          term_name: current.active_term?.name,
+          year: current.active_term?.year
+        },
+        ...(current.quiz_results || [])
+      ];
+      const assignedQuizzes = (current.assigned_quizzes || []).map((quiz) => {
+        if (!sameId(quiz.quiz_id, activeQuiz.quiz_id)) return quiz;
+        const attemptsUsed = Number(quiz.attempts_used || 0) + 1;
+        const maxAttempts = Number(quiz.max_attempts || 3);
+        return {
+          ...quiz,
+          attempts_used: attemptsUsed,
+          best_score: Math.max(Number(quiz.best_score || 0), score),
+          can_attempt: attemptsUsed < maxAttempts,
+          expectation: result.expectation || quiz.expectation
+        };
+      });
+      return {
+        ...current,
+        assigned_quizzes: assignedQuizzes,
+        quiz_results: quizResults,
+        summary: {
+          ...(current.summary || {}),
+          average_quiz_score: average(quizResults, "score")
+        }
+      };
+    });
+  }, [activeQuiz]);
+
+  const updateDashboardAfterTyping = useCallback((result) => {
+    setDashboard((current) => {
+      if (!current || !activeTyping) return current;
+      const wpm = Number(result.wpm || 0);
+      const accuracy = Number(result.accuracy || 0);
+      const typingResults = [
+        {
+          id: result.id,
+          typing_test_id: result.typing_test_id || activeTyping.typing_test_id,
+          test_title: activeTyping.title || "Typing test",
+          wpm,
+          accuracy,
+          time_taken_seconds: result.time_taken_seconds,
+          created_at: result.created_at || new Date().toISOString(),
+          term_name: current.active_term?.name,
+          year: current.active_term?.year
+        },
+        ...(current.typing_results || [])
+      ];
+      const assignedTypingTests = (current.assigned_typing_tests || []).map((test) => {
+        if (!sameId(test.typing_test_id, activeTyping.typing_test_id)) return test;
+        return {
+          ...test,
+          attempts_used: Number(test.attempts_used || 0) + 1,
+          best_wpm: Math.max(Number(test.best_wpm || 0), wpm)
+        };
+      });
+      return {
+        ...current,
+        assigned_typing_tests: assignedTypingTests,
+        typing_results: typingResults,
+        summary: {
+          ...(current.summary || {}),
+          average_typing_wpm: average(typingResults, "wpm"),
+          average_typing_accuracy: average(typingResults, "accuracy")
+        }
+      };
+    });
+  }, [activeTyping]);
+
   async function openQuiz(quizId) {
     setError("");
     setQuizResult(null);
@@ -669,32 +815,44 @@ export default function StudentPage() {
 
   async function saveLesson(submitQuiz = false) {
     if (!selectedLesson || !activeCourse) return;
-    const saved = await api.patch(`/student/lessons/${selectedLesson.id}/progress`, {
-      ...lessonDraft,
-      submit_quiz: submitQuiz
-    });
-    const detail = await api.get(`/student/courses/${activeCourse.id}`);
-    setActiveCourse(detail);
-    setSelectedLesson(detail.modules.flatMap((module) => module.lessons).find((lesson) => lesson.id === selectedLesson.id) || selectedLesson);
-    setLessonDraft({
-      practice_code: saved.practice_code,
-      homework_code: saved.homework_code,
-      creativity_code: saved.creativity_code,
-      quiz_answers: typeof saved.quiz_answers === "object" && saved.quiz_answers ? saved.quiz_answers : {},
-      activity_progress: saved.activity_progress && typeof saved.activity_progress === "object" ? saved.activity_progress : {}
-    });
-    await loadDashboard();
+    setStudentNotice(submitQuiz ? "Submitting lesson quiz..." : "Saving lesson...");
+    setError("");
+    try {
+      const saved = await api.patch(`/student/lessons/${selectedLesson.id}/progress`, {
+        ...lessonDraft,
+        submit_quiz: submitQuiz
+      });
+      const detail = await api.get(`/student/courses/${activeCourse.id}`);
+      setActiveCourse(detail);
+      setSelectedLesson(detail.modules.flatMap((module) => module.lessons).find((lesson) => lesson.id === selectedLesson.id) || selectedLesson);
+      setLessonDraft({
+        practice_code: saved.practice_code,
+        homework_code: saved.homework_code,
+        creativity_code: saved.creativity_code,
+        quiz_answers: typeof saved.quiz_answers === "object" && saved.quiz_answers ? saved.quiz_answers : {},
+        activity_progress: saved.activity_progress && typeof saved.activity_progress === "object" ? saved.activity_progress : {}
+      });
+      updateDashboardAfterLesson(selectedLesson, saved, detail);
+      setStudentNotice(submitQuiz ? "Lesson quiz submitted." : "Lesson saved.");
+      window.setTimeout(() => setStudentNotice(""), 1600);
+    } catch (err) {
+      setStudentNotice("");
+      setError(err.message);
+    }
   }
 
   async function submitQuiz(event) {
     event.preventDefault();
     setError("");
+    setQuizSubmitting(true);
     try {
       const result = await api.post(`/student/quizzes/${activeQuiz.quiz_id}/attempts`, { answers });
       setQuizResult(result);
-      await loadDashboard();
+      updateDashboardAfterQuiz(result);
     } catch (err) {
       setError(err.message);
+    } finally {
+      setQuizSubmitting(false);
     }
   }
 
@@ -711,12 +869,13 @@ export default function StudentPage() {
         time_taken_seconds: Math.min(elapsed, duration)
       });
       setTypingResult(result);
-      await loadDashboard();
+      updateDashboardAfterTyping(result);
+      window.setTimeout(() => setTypingSubmitting(false), 300);
     } catch (err) {
       setError(err.message);
       setTypingSubmitting(false);
     }
-  }, [activeTyping, typedText, typingStartedAt, typingResult, typingSubmitting, loadDashboard]);
+  }, [activeTyping, typedText, typingStartedAt, typingResult, typingSubmitting, updateDashboardAfterTyping]);
 
   async function submitTyping(event) {
     event.preventDefault();
@@ -814,6 +973,7 @@ export default function StudentPage() {
         </header>
 
         {error ? <div className="student-alert">{error}</div> : null}
+        {studentNotice ? <div className="student-alert student-success">{studentNotice}</div> : null}
         {loading ? <div className="student-loading">Loading your learning workspace...</div> : null}
 
         {!loading && dashboard && activeTab === "overview" && (
@@ -824,6 +984,20 @@ export default function StudentPage() {
               <StatCard label="Badges" value={summary.badges} icon={Award} tone="gold" />
               <StatCard label="Typing WPM" value={numberLabel(summary.average_typing_wpm)} icon={Gauge} tone="coral" />
             </div>
+            <section className="student-panel">
+              <h2>This Week</h2>
+              {weeklyWork.length ? (
+                <div className="student-section" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))" }}>
+                  {weeklyWork.map((item) => (
+                    <button type="button" key={item.id} className="student-week-card" onClick={item.action}>
+                      <span>{item.type}</span>
+                      <strong>{item.title}</strong>
+                      <small>{item.detail}</small>
+                    </button>
+                  ))}
+                </div>
+              ) : <EmptyState title="No assigned work for this week yet." />}
+            </section>
             <section className="student-panel">
               <h2>Course Performance</h2>
               <CourseBars rows={dashboard.course_performance} />
@@ -976,7 +1150,7 @@ export default function StudentPage() {
                       <h3>{quiz.quiz_title || "Untitled Quiz"}</h3>
                       <div className="quiz-meta">
                         <span>{formatDate(quiz.created_at)}</span>
-                        <span>{quiz.time_taken_seconds}s</span>
+                        {quiz.time_taken_seconds != null ? <span>{quiz.time_taken_seconds}s</span> : null}
                       </div>
                       <div className="quiz-score">{numberLabel(quiz.score)}%</div>
                     </div>
@@ -1023,7 +1197,7 @@ export default function StudentPage() {
                     ))}
                   </fieldset>
                 ))}
-                <button type="submit"><CheckCircle2 size={16} />Submit quiz</button>
+                <button type="submit" disabled={quizSubmitting}><CheckCircle2 size={16} />{quizSubmitting ? "Submitting..." : "Submit quiz"}</button>
               </form>
             )}
           </section>

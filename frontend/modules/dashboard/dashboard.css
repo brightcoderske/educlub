@@ -14,6 +14,10 @@
 }
 
 .admin-sidebar {
+  position: sticky;
+  top: 0;
+  align-self: start;
+  height: 100vh;
   background: linear-gradient(180deg, #1e3a8a 0%, #1e40af 100%);
   color: #fff;
   padding: 20px 16px;
@@ -23,7 +27,18 @@
   box-shadow: 4px 0 24px rgba(30, 58, 138, 0.12);
   transition: padding-inline 0.25s ease;
   overflow-y: auto;
-  max-height: 100vh;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.36) transparent;
+}
+
+.admin-sidebar::-webkit-scrollbar {
+  width: 8px;
+}
+
+.admin-sidebar::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.32);
+  border-radius: 999px;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -610,6 +625,21 @@ button:disabled {
   font-size: 0.9rem;
 }
 
+.link-button {
+  background: transparent;
+  color: #3b82f6;
+  box-shadow: none;
+  padding: 0;
+  min-height: 0;
+  justify-content: flex-start;
+  text-align: left;
+  font-weight: 600;
+}
+
+.link-button:hover {
+  text-decoration: underline;
+}
+
 .school-name-link {
   color: #3b82f6;
   font-weight: 600;
@@ -682,8 +712,20 @@ button:disabled {
   transition: all 0.2s ease;
 }
 
+.module-card-button {
+  width: 100%;
+  border: 1px solid #e2e8f0;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+
 .module-card:hover {
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+.module-card-button:hover {
+  border-color: #3b82f6;
 }
 
 .module-card h3,
@@ -729,6 +771,26 @@ button:disabled {
   }
 }
 
+.course-cover-thumb {
+  width: 74px;
+  height: 46px;
+  border-radius: 8px;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(135deg, #dbeafe, #dcfce7);
+  color: #1e40af;
+  font-weight: 800;
+  border: 1px solid #dbeafe;
+}
+
+.course-cover-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
 table {
   width: 100%;
   border-collapse: collapse;
@@ -770,6 +832,7 @@ tr:hover td {
 
   .admin-sidebar {
     position: static;
+    height: auto;
     max-height: none;
   }
 

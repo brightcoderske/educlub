@@ -2,9 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { useRouter, useParams } from "next/navigation";
-import { api } from "../../../../lib/api";
-import { currentUser } from "../../../../lib/auth";
-import TeacherCourseView from "../../../../modules/courseBuilder/TeacherCourseView";
+import { currentUser } from "../../../../../lib/auth";
+import TeacherCourseView from "../../../../../modules/courseBuilder/TeacherCourseView";
 
 export default function TeacherCoursePreviewPage() {
   const router = useRouter();

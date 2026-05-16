@@ -1,22 +1,57 @@
+const crypto = require("crypto");
+const fs = require("fs");
+const path = require("path");
 const { query, one, transaction } = require("../config/database");
 const { assertSystemAdmin } = require("./systemAdmin.service");
+const {
+  requesterId,
+  requireCourseViewAccess,
+  requireOwnLearnerAccess,
+  requireActiveCourseEnrollment,
+  completedCourseProgress,
+  markLessonCompleted
+} = require("./courseAccess.service");
 const { ensureCourseBuilderSchema } = require("../utils/schemaGuard");
 
-const ACTIVITY_TYPE_SET = new Set([
+const ACTIVITY_TYPES = [
+  "rich_text",
+  "image_upload",
+  "code_explanation",
+  "runnable_code",
+  "practice_code",
+  "auto_marked_code",
+  "quiz",
+  "flashcards",
+  "assignment_submission",
+  "mark_complete",
   "learn_content",
   "practice",
   "creative_corner",
   "teacher_task",
-  "quiz",
   "submission"
-]);
+];
+
+const ACTIVITY_TYPE_SET = new Set(ACTIVITY_TYPES);
+
+const COVER_IMAGE_EXTENSIONS = new Set([".jpg", ".jpeg", ".png"]);
+const COVER_IMAGE_MIME_TYPES = new Set(["image/jpeg", "image/png"]);
 
 function defaultPayload(type) {
   switch (type) {
     case "learn_content":
+    case "rich_text":
       return { richText: "", images: [], videoUrls: [], codeExample: "", teacherNotes: "" };
+    case "image_upload":
+      return { imageUrl: "", alt: "", caption: "" };
+    case "code_explanation":
+      return { language: "javascript", explanation: "", code: "" };
+    case "runnable_code":
+      return { language: "javascript", starterCode: "", html: "", css: "", js: "", instructions: "" };
     case "practice":
+    case "practice_code":
       return { language: "python", instructions: "", starterCode: "", expectedHints: "" };
+    case "auto_marked_code":
+      return { language: "javascript", instructions: "", starterCode: "", expectedOutput: "", requiredKeywords: [], hiddenTests: [] };
     case "creative_corner":
       return { instructions: "" };
     case "teacher_task":
@@ -25,15 +60,20 @@ function defaultPayload(type) {
       return {
         questions: [{ type: "mcq", question: "", options: ["", "", "", ""], correctIndex: 0, marks: 10 }]
       };
+    case "flashcards":
+      return { cards: [{ front: "", back: "" }] };
     case "submission":
+    case "assignment_submission":
       return {
         instructions: "",
         allowCode: true,
         allowText: true,
         allowFile: true,
         allowLink: true,
-        allowScreenshot: false
+        allowScreenshot: true
       };
+    case "mark_complete":
+      return { title: "Mark lesson complete", xp: 20, message: "Great work. You completed this lesson." };
     default:
       return {};
   }
@@ -41,6 +81,26 @@ function defaultPayload(type) {
 
 async function ensure() {
   await ensureCourseBuilderSchema({ query });
+  await query(`
+    create table if not exists student_activity_submissions (
+      id uuid primary key default gen_random_uuid(),
+      activity_block_id uuid not null references lesson_activity_blocks(id) on delete cascade,
+      user_id uuid not null references users(id) on delete cascade,
+      answer jsonb not null default '{}'::jsonb,
+      submission jsonb not null default '{}'::jsonb,
+      score numeric(6,2) not null default 0,
+      attempts integer not null default 1,
+      time_spent_seconds integer not null default 0,
+      submitted_at timestamptz not null default now(),
+      updated_at timestamptz not null default now(),
+      unique (activity_block_id, user_id)
+    )
+  `);
+  await query("create index if not exists student_activity_submissions_user_idx on student_activity_submissions (user_id)");
+  await query("alter table student_activity_submissions add column if not exists feedback text");
+  await query("alter table student_activity_submissions add column if not exists review_status text not null default 'submitted'");
+  await query("alter table student_activity_submissions add column if not exists reviewed_by uuid references users(id) on delete set null");
+  await query("alter table student_activity_submissions add column if not exists reviewed_at timestamptz");
 }
 
 async function getBlueprint(courseId, user) {
@@ -167,6 +227,47 @@ async function patchCourse(courseId, payload, user) {
     ]
   );
   return getBlueprint(courseId, user);
+}
+
+async function uploadCourseCover(courseId, file, user) {
+  assertSystemAdmin(user);
+  await ensure();
+
+  if (!file) {
+    const error = new Error("Course cover image is required");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const extension = path.extname(file.originalname || "").toLowerCase();
+  if (!COVER_IMAGE_EXTENSIONS.has(extension) || !COVER_IMAGE_MIME_TYPES.has(file.mimetype)) {
+    const error = new Error("Upload a JPG, JPEG, or PNG course cover image");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const existing = await one("select id from courses where id = $1 and deleted_at is null", [courseId]);
+  if (!existing) {
+    const error = new Error("Course not found");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const uploadDir = path.resolve(__dirname, "..", "uploads", "course-covers");
+  fs.mkdirSync(uploadDir, { recursive: true });
+  const filename = `${courseId}-${Date.now()}-${crypto.randomUUID()}${extension}`;
+  fs.writeFileSync(path.join(uploadDir, filename), file.buffer);
+
+  const coverImageUrl = `/uploads/course-covers/${filename}`;
+  const course = await one(
+    `update courses
+     set cover_image_url = $2, thumbnail_type = 'image', updated_at = now()
+     where id = $1 and deleted_at is null
+     returning id, cover_image_url, thumbnail_type`,
+    [courseId, coverImageUrl]
+  );
+
+  return course;
 }
 
 async function createModule(courseId, payload, user) {
@@ -492,22 +593,7 @@ async function reorderActivityBlocks(lessonId, orderedIds, user) {
 
 async function viewCourse(courseId, user) {
   await ensure();
-  
-  // Check permissions: school admin or enrolled student
-  const isSchoolAdmin = user.role === "school_admin" || user.role === "system_admin";
-  if (!isSchoolAdmin) {
-    const enrollment = await one(
-      `select 1 from course_enrolments ce 
-       join courses c on c.id = ce.course_id 
-       where ce.course_id = $1 and ce.user_id = $2 and ce.deleted_at is null and c.deleted_at is null`,
-      [courseId, user.id]
-    );
-    if (!enrollment) {
-      const error = new Error("Not enrolled in this course");
-      error.statusCode = 403;
-      throw error;
-    }
-  }
+  await requireCourseViewAccess(courseId, user);
 
   const course = await one(
     `select id, coalesce(name, title) as name, title, description, short_description, objectives, 
@@ -575,79 +661,33 @@ async function viewCourse(courseId, user) {
 
 async function getCourseProgress(courseId, userId, requestingUser) {
   await ensure();
-  
-  // Check permissions: school admin or the student themselves
-  const isSchoolAdmin = requestingUser.role === "school_admin" || requestingUser.role === "system_admin";
-  const isOwnProgress = requestingUser.id === userId;
-  
-  if (!isSchoolAdmin && !isOwnProgress) {
-    const error = new Error("Unauthorized to view this progress");
-    error.statusCode = 403;
-    throw error;
-  }
-
-  const progress = await one(
-    `select 
-      coalesce(jsonb_agg(ce.lesson_id) filter (where ce.lesson_id is not null), '[]'::jsonb) as completed_lessons,
-      coalesce(jsonb_agg(ce.activity_block_id) filter (where ce.activity_block_id is not null), '[]'::jsonb) as completed_activities,
-      coalesce(ce.total_score, 0) as total_score
-     from course_enrolments ce
-     where ce.course_id = $1 and ce.user_id = $2 and ce.deleted_at is null`,
+  requireOwnLearnerAccess(requestingUser, userId, "view this progress");
+  await requireActiveCourseEnrollment(courseId, userId, requestingUser);
+  const progress = await completedCourseProgress(courseId, userId);
+  const activities = await query(
+    `select sa.activity_block_id, sa.score, sa.attempts, sa.submitted_at
+     from student_activity_submissions sa
+     join lesson_activity_blocks b on b.id = sa.activity_block_id
+     join lessons l on l.id = b.lesson_id
+     join modules m on m.id = l.module_id
+     where m.course_id = $1 and sa.user_id = $2`,
     [courseId, userId]
   );
-  
-  if (!progress) {
-    return {
-      completed_lessons: [],
-      completed_activities: [],
-      total_score: 0
-    };
-  }
-  
+  const activityScore = activities.rows.reduce((sum, row) => sum + Number(row.score || 0), 0);
   return {
-    completed_lessons: progress.completed_lessons || [],
-    completed_activities: progress.completed_activities || [],
-    total_score: progress.total_score || 0
+    ...progress,
+    completed_activities: activities.rows.map((row) => row.activity_block_id),
+    activity_scores: activities.rows,
+    total_score: Number(progress.total_score || 0) + activityScore
   };
 }
 
 async function markLessonComplete(courseId, lessonId, userId, requestingUser) {
   await ensure();
-  
-  // Check permissions: school admin or the student themselves
-  const isSchoolAdmin = requestingUser.role === "school_admin" || requestingUser.role === "system_admin";
-  const isOwnProgress = requestingUser.id === userId;
-  
-  if (!isSchoolAdmin && !isOwnProgress) {
-    const error = new Error("Unauthorized to mark lesson complete");
-    error.statusCode = 403;
-    throw error;
-  }
-
-  // Check enrollment
-  const enrollment = await one(
-    `select id, completed_lessons from course_enrolments 
-     where course_id = $1 and user_id = $2 and deleted_at is null`,
-    [courseId, userId]
-  );
-  
-  if (!enrollment) {
-    const error = new Error("Not enrolled in this course");
-    error.statusCode = 403;
-    throw error;
-  }
-
-  const completedLessons = enrollment.completed_lessons || [];
-  if (!completedLessons.includes(lessonId)) {
-    completedLessons.push(lessonId);
-    await query(
-      `update course_enrolments 
-       set completed_lessons = $1::jsonb, updated_at = now()
-       where id = $2`,
-      [JSON.stringify(completedLessons), enrollment.id]
-    );
-  }
-  
+  userId = userId || requesterId(requestingUser);
+  requireOwnLearnerAccess(requestingUser, userId, "mark lesson complete");
+  await requireActiveCourseEnrollment(courseId, userId, requestingUser);
+  await markLessonCompleted(courseId, lessonId, userId);
   return { ok: true };
 }
 
@@ -670,59 +710,61 @@ async function submitActivityBlock(blockId, submission, requestingUser) {
     throw error;
   }
 
-  const userId = submission.userId || requestingUser.id;
-  
-  // Check permissions: school admin or the student themselves
-  const isSchoolAdmin = requestingUser.role === "school_admin" || requestingUser.role === "system_admin";
-  const isOwnSubmission = requestingUser.id === userId;
-  
-  if (!isSchoolAdmin && !isOwnSubmission) {
-    const error = new Error("Unauthorized to submit activity");
-    error.statusCode = 403;
-    throw error;
+  const userId = submission.userId || requesterId(requestingUser);
+  requireOwnLearnerAccess(requestingUser, userId, "submit activity");
+  await requireActiveCourseEnrollment(block.course_id, userId, requestingUser);
+
+  const payload = block.payload || {};
+  const answer = submission.answer || {};
+  const submissionBody = submission.submission || {};
+  let score = 0;
+  const maxScore = Number(block.marks_weight || payload.xp || 10);
+
+  if (block.activity_type === "quiz") {
+    const questions = Array.isArray(payload.questions) ? payload.questions : [];
+    if (questions.length) {
+      const answers = answer.answers || answer;
+      const correct = questions.filter((question, index) => {
+        const expected = question.correctIndex ?? question.correct_index ?? question.correct;
+        const received = answers[question.id || index];
+        return String(received) === String(expected);
+      }).length;
+      score = Math.round((correct / questions.length) * maxScore * 100) / 100;
+    }
+  } else if (block.activity_type === "auto_marked_code") {
+    const code = String(submissionBody.code || answer.code || "");
+    const output = String(submissionBody.output || answer.output || "");
+    const requiredKeywords = Array.isArray(payload.requiredKeywords) ? payload.requiredKeywords : [];
+    const keywordOk = requiredKeywords.every((keyword) => code.includes(String(keyword)));
+    const expectedOk = payload.expectedOutput ? output.trim().includes(String(payload.expectedOutput).trim()) : true;
+    score = keywordOk && expectedOk ? maxScore : Math.round(maxScore * 0.5 * 100) / 100;
+  } else if (["rich_text", "image_upload", "code_explanation", "runnable_code", "practice_code", "flashcards", "assignment_submission", "mark_complete", "learn_content", "practice", "submission", "teacher_task", "creative_corner"].includes(block.activity_type)) {
+    score = maxScore;
   }
 
-  // Check enrollment
-  const enrollment = await one(
-    `select id, completed_activities from course_enrolments 
-     where course_id = $1 and user_id = $2 and deleted_at is null`,
-    [block.course_id, userId]
+  const saved = await one(
+    `insert into student_activity_submissions (activity_block_id, user_id, answer, submission, score, time_spent_seconds)
+     values ($1, $2, $3::jsonb, $4::jsonb, $5, $6)
+     on conflict (activity_block_id, user_id) do update set
+       answer = excluded.answer,
+       submission = excluded.submission,
+       score = excluded.score,
+       attempts = student_activity_submissions.attempts + 1,
+       time_spent_seconds = student_activity_submissions.time_spent_seconds + excluded.time_spent_seconds,
+       submitted_at = now(),
+       updated_at = now()
+     returning id, activity_block_id, score, attempts, submitted_at`,
+    [blockId, userId, JSON.stringify(answer || {}), JSON.stringify(submissionBody || {}), score, Number(submission.time_spent_seconds || 0)]
   );
   
-  if (!enrollment) {
-    const error = new Error("Not enrolled in this course");
-    error.statusCode = 403;
-    throw error;
-  }
+  return { ok: true, score, expectation: expectationLabel(score, maxScore), submission: saved };
+}
 
-  const completedActivities = enrollment.completed_activities || [];
-  if (!completedActivities.includes(blockId)) {
-    completedActivities.push(blockId);
-    
-    // Calculate score for quiz activities
-    let score = 0;
-    if (block.activity_type === "quiz" && submission.answer) {
-      const quizData = block.payload?.quiz || {};
-      if (quizData.options && quizData.correctIndex !== undefined) {
-        const correctAnswer = quizData.options[quizData.correctIndex];
-        if (submission.answer === correctAnswer) {
-          score = block.marks_weight || 10;
-        }
-      }
-    }
-    
-    // Update enrollment
-    await query(
-      `update course_enrolments 
-       set completed_activities = $1::jsonb, 
-           total_score = total_score + $2,
-           updated_at = now()
-       where id = $3`,
-      [JSON.stringify(completedActivities), score, enrollment.id]
-    );
-  }
-  
-  return { ok: true, score };
+function expectationLabel(score, maxScore = 100) {
+  const percent = maxScore ? (Number(score || 0) / Number(maxScore)) * 100 : Number(score || 0);
+  if (percent <= 50) return "Approaching Expectation";
+  if (percent <= 80) return "Meeting Expectation";
+  return "Exceeding Expectation";
 }
 
 module.exports = {
@@ -732,6 +774,7 @@ module.exports = {
   markLessonComplete,
   submitActivityBlock,
   patchCourse,
+  uploadCourseCover,
   createModule,
   updateModule,
   deleteModule,
@@ -744,5 +787,5 @@ module.exports = {
   updateActivityBlock,
   deleteActivityBlock,
   reorderActivityBlocks,
-  ACTIVITY_TYPES: Array.from(ACTIVITY_TYPE_SET)
+  ACTIVITY_TYPES
 };

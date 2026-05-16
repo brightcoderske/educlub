@@ -1,3 +1,38 @@
+const schemaChecks = new Map();
+
+function runSchemaCheckOnce(key, task) {
+  if (schemaChecks.has(key)) return schemaChecks.get(key);
+
+  const check = task().catch((error) => {
+    schemaChecks.delete(key);
+    throw error;
+  });
+
+  schemaChecks.set(key, check);
+  return check;
+}
+
+async function ensureLearnerProfilesSchema(db) {
+  await db.query(`
+    create table if not exists learner_profiles (
+      id uuid primary key default gen_random_uuid(),
+      user_id uuid not null references users(id) on delete cascade,
+      school_id uuid not null references schools(id) on delete cascade,
+      full_name text not null,
+      grade text,
+      stream text,
+      parent_name text,
+      parent_email text,
+      parent_phone text,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now(),
+      unique (user_id)
+    )
+  `);
+
+  await db.query("create index if not exists learner_profiles_school_idx on learner_profiles (school_id)");
+}
+
 async function ensureCourseColumns(db) {
 
   await db.query("alter table courses add column if not exists title text");
@@ -110,9 +145,13 @@ async function ensureCourseColumns(db) {
 
       school_id uuid not null references schools(id) on delete cascade,
 
+      term_id uuid references terms(id) on delete cascade,
+
       course_id uuid not null references courses(id) on delete cascade,
 
       module_id uuid not null references modules(id) on delete cascade,
+
+      week_number integer,
 
       available_from timestamptz,
 
@@ -128,11 +167,16 @@ async function ensureCourseColumns(db) {
 
   `);
 
+  await db.query("alter table course_module_availability add column if not exists term_id uuid references terms(id) on delete cascade");
+
+  await db.query("alter table course_module_availability add column if not exists week_number integer");
+
 }
 
 
 
 async function ensureCourseBuilderSchema(db) {
+  await ensureLearnerProfilesSchema(db);
 
   await db.query("alter table courses add column if not exists short_description text");
 
@@ -155,6 +199,8 @@ async function ensureCourseBuilderSchema(db) {
   await db.query("alter table courses add column if not exists meta_keywords text");
 
   await db.query("alter table courses add column if not exists public boolean default false");
+
+  await db.query("alter table quiz_assignments add column if not exists week_number integer");
 
   await db.query("alter table modules add column if not exists icon_url text");
 
@@ -204,13 +250,101 @@ async function ensureCourseBuilderSchema(db) {
 
 async function ensureTypingColumns(db) {
 
+  await db.query(`
+    create table if not exists typing_tests (
+      id uuid primary key default gen_random_uuid(),
+      school_id uuid references schools(id) on delete cascade,
+      title text not null,
+      passage text not null,
+      duration_seconds integer not null default 300,
+      grade_levels integer[] not null default '{}',
+      max_attempts integer not null default 3,
+      is_global boolean not null default false,
+      is_published boolean not null default true,
+      created_by uuid references users(id) on delete set null,
+      deleted_at timestamptz,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    )
+  `);
+
+  await db.query(`
+    create table if not exists typing_assignments (
+      id uuid primary key default gen_random_uuid(),
+      typing_test_id uuid not null references typing_tests(id) on delete cascade,
+      school_id uuid not null references schools(id) on delete cascade,
+      term_id uuid references terms(id) on delete restrict,
+      grade integer not null check (grade between 1 and 9),
+      assigned_by uuid references users(id) on delete set null,
+      week_number integer,
+      available_from timestamptz,
+      available_until timestamptz,
+      is_active boolean not null default true,
+      assigned_at timestamptz not null default now(),
+      unique (typing_test_id, school_id, term_id, grade)
+    )
+  `);
+
+  await db.query(`
+    create table if not exists typing_attempts (
+      id uuid primary key default gen_random_uuid(),
+      typing_test_id uuid not null references typing_tests(id) on delete cascade,
+      assignment_id uuid references typing_assignments(id) on delete set null,
+      learner_id uuid not null references users(id) on delete cascade,
+      school_id uuid not null references schools(id) on delete cascade,
+      term_id uuid not null references terms(id) on delete restrict,
+      wpm numeric(6,2) not null,
+      accuracy numeric(5,2) not null,
+      time_taken_seconds integer not null,
+      typed_text text,
+      raw_answer text not null default '',
+      created_at timestamptz not null default now()
+    )
+  `);
+
   await db.query("alter table typing_tests add column if not exists max_attempts integer not null default 3");
 
   await db.query("alter table typing_attempts add column if not exists raw_answer text not null default ''");
 
+  await db.query("alter table typing_assignments add column if not exists week_number integer");
+
+}
+
+async function ensureTwoFactorSchema(db) {
+  await db.query(`
+    create table if not exists login_2fa_challenges (
+      id uuid primary key default gen_random_uuid(),
+      user_id uuid not null references users(id) on delete cascade,
+      code_hash text not null,
+      attempts integer not null default 0,
+      expires_at timestamptz not null,
+      consumed_at timestamptz,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    )
+  `);
+
+  await db.query("alter table login_2fa_challenges add column if not exists user_id uuid references users(id) on delete cascade");
+  await db.query("alter table login_2fa_challenges add column if not exists code_hash text");
+  await db.query("alter table login_2fa_challenges add column if not exists attempts integer not null default 0");
+  await db.query("alter table login_2fa_challenges add column if not exists expires_at timestamptz");
+  await db.query("alter table login_2fa_challenges add column if not exists consumed_at timestamptz");
+  await db.query("alter table login_2fa_challenges add column if not exists created_at timestamptz not null default now()");
+  await db.query("alter table login_2fa_challenges add column if not exists updated_at timestamptz not null default now()");
+  await db.query(`
+    create index if not exists login_2fa_challenges_user_active_idx
+      on login_2fa_challenges (user_id, expires_at)
+      where consumed_at is null
+  `);
 }
 
 
 
-module.exports = { ensureCourseColumns, ensureTypingColumns, ensureCourseBuilderSchema };
+module.exports = {
+  ensureCourseColumns: (db) => runSchemaCheckOnce("course_columns", () => ensureCourseColumns(db)),
+  ensureTypingColumns: (db) => runSchemaCheckOnce("typing_schema", () => ensureTypingColumns(db)),
+  ensureCourseBuilderSchema: (db) => runSchemaCheckOnce("course_builder", () => ensureCourseBuilderSchema(db)),
+  ensureLearnerProfilesSchema: (db) => runSchemaCheckOnce("learner_profiles", () => ensureLearnerProfilesSchema(db)),
+  ensureTwoFactorSchema: (db) => runSchemaCheckOnce("two_factor_schema", () => ensureTwoFactorSchema(db))
+};
 
